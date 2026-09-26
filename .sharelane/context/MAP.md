@@ -14,12 +14,12 @@ Read only the chunks relevant to your task. After meaningful work, update the af
 
 | Chunk | Read this when… | Covers files | Updated at | Status |
 |---|---|---|---|---|
-| [API and tools](./api.md) | You are changing commands, tools, integrations, or public interfaces. | Not set yet | 2026-09-26T20:41:18.545Z | current |
-| [Architecture](./architecture.md) | Understanding ShareLane components and data flow. | `src/**` | 2026-09-26T20:48:34.060Z | current |
-| [Project conventions](./conventions.md) | You need the project's coding, testing, or collaboration rules. | Not set yet | 2026-09-26T20:41:18.547Z | current |
-| [Data and storage](./data.md) | You are changing stored data, schemas, migrations, or persistence. | Not set yet | 2026-09-26T20:41:18.546Z | current |
-| [Project decisions](./decisions.md) | You need to know why an important choice was made. | Not set yet | 2026-09-26T20:41:18.548Z | current |
-| [User interface](./ui.md) | You are changing screens, interactions, or visual behavior. | Not set yet | 2026-09-26T20:41:18.543Z | current |
+| [API and tools](./api.md) | Changing commands, MCP tools, integrations, or public interfaces. | `src/mcp/**`, `src/cli.ts` | 2026-09-26T20:50:48.713Z | current |
+| [Architecture](./architecture.md) | Understanding ShareLane components and data flow. | `src/**` | 2026-09-26T20:50:48.371Z | current |
+| [Project conventions](./conventions.md) | Following the project's coding, testing, documentation, or collaboration rules. | `AGENTS.md`, `CLAUDE.md`, `package.json`, `tsconfig.json` | 2026-09-26T20:50:49.943Z | current |
+| [Data and storage](./data.md) | Changing stored data, schemas, search, migrations, or persistence. | `src/db/**`, `src/core/database.ts`, `src/core/context.ts`, `src/core/memory.ts` | 2026-09-26T20:50:49.184Z | current |
+| [Project decisions](./decisions.md) | Understanding why a storage, context, or agent-integration choice was made. | `docs/DECISIONS.md` | 2026-09-26T20:50:50.766Z | current |
+| [User interface](./ui.md) | Changing screens, interactions, dashboard behavior, or visual design. | Not set yet | 2026-09-26T20:50:51.726Z | current |
 
 ## Context map
 
