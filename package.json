@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev:mcp": "tsx src/mcp/server.ts",
+    "test": "tsx --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

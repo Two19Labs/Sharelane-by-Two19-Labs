@@ -33,6 +33,7 @@ Every decision made so far, and why. Add new ones at the bottom of the right tab
 | 22 | **Record and understand before building**; build in small phases, each explained, each with a "done when" check | This is a learning project |
 | 23 | **Use Node's native ES modules**, with TypeScript's matching `NodeNext` module rules | Keeps ShareLane on one modern module system and matches the MCP SDK ecosystem |
 | 24 | Agent MCP configurations identify their caller with the `SHARELANE_AGENT` environment variable; `whoami()` returns `unknown` when it is absent | A project-prefixed name avoids collisions and gives every adapter one simple, shared convention |
+| 25 | Treat `.sharelane/notes.txt` as local runtime state and ignore it in Git; this does not decide whether future `.sharelane/context/` files are committed | Temporary shared notes should not create repository noise, while the context-sharing policy is still an open question |
 
 ## Proposed — need your yes/no
 

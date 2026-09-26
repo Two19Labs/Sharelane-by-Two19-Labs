@@ -11,6 +11,9 @@ coverage/
 .env.*
 !.env.example
 
+# Phase 0's local shared notebook (context commit policy is still undecided)
+.sharelane/notes.txt
+
 # Operating-system files
 .DS_Store
 Thumbs.db
