@@ -32,6 +32,7 @@ Every decision made so far, and why. Add new ones at the bottom of the right tab
 | 21 | Gemini CLI may be installed on this machine | Manthan gave the go-ahead; planned for phase 7 |
 | 22 | **Record and understand before building**; build in small phases, each explained, each with a "done when" check | This is a learning project |
 | 23 | **Use Node's native ES modules**, with TypeScript's matching `NodeNext` module rules | Keeps ShareLane on one modern module system and matches the MCP SDK ecosystem |
+| 24 | Agent MCP configurations identify their caller with the `SHARELANE_AGENT` environment variable; `whoami()` returns `unknown` when it is absent | A project-prefixed name avoids collisions and gives every adapter one simple, shared convention |
 
 ## Proposed — need your yes/no
 

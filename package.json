@@ -4,6 +4,7 @@
   "description": "A shared project memory and delegation hub for coding agents.",
   "type": "module",
   "scripts": {
+    "dev:mcp": "tsx src/mcp/server.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
