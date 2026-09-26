@@ -121,6 +121,7 @@ test("context map marks a chunk stale after a covered source file changes", asyn
       assert.equal(result.status, 0, result.stderr);
     }
 
+    await writeFile(join(projectRoot, "src", "example.ts"), "export const value = 2;\n", "utf8");
     updateChunk(
       {
         id: "architecture",
@@ -131,7 +132,20 @@ test("context map marks a chunk stale after a covered source file changes", asyn
     );
     assert.doesNotMatch(contextMap(projectRoot), /Architecture[^\n]*⚠ stale/);
 
-    await writeFile(join(projectRoot, "src", "example.ts"), "export const value = 2;\n", "utf8");
+    for (const args of [
+      ["add", "src/example.ts"],
+      ["commit", "-m", "change source and its context together"],
+    ]) {
+      const result = spawnSync("git", args, {
+        cwd: projectRoot,
+        encoding: "utf8",
+        windowsHide: true,
+      });
+      assert.equal(result.status, 0, result.stderr);
+    }
+    assert.doesNotMatch(contextMap(projectRoot), /Architecture[^\n]*⚠ stale/);
+
+    await writeFile(join(projectRoot, "src", "example.ts"), "export const value = 3;\n", "utf8");
     assert.match(contextMap(projectRoot), /Architecture[^\n]*⚠ stale/);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });

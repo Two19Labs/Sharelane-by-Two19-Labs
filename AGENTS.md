@@ -36,3 +36,9 @@ Update `GLOBAL_CONTEXT.md` as the final project edit of every work session, even
 Keep entries concise. Record meaningful actions and outcomes, not hidden reasoning, full chat transcripts, or large command outputs. If no files changed, say so. If a check was not run, say so rather than implying that it passed.
 
 After updating the context, make the planned Git checkpoint when appropriate. In the final reply, explain what changed in simple words and mention any check the user can try.
+
+<!-- sharelane-context:start -->
+## ShareLane shared context
+
+Before project work, read `.sharelane/context/MAP.md` and then read only the context chunks relevant to the task. After meaningful work, update the affected chunks through ShareLane so the map, search index, and freshness status stay accurate.
+<!-- sharelane-context:end -->

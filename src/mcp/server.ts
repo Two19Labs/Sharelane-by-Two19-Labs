@@ -18,6 +18,12 @@ server.registerTool(
   "ping",
   {
     description: "Check that ShareLane is reachable and return a greeting.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     inputSchema: {
       name: z.string().min(1).describe("Name to greet"),
     },
@@ -36,6 +42,12 @@ server.registerTool(
   "whoami",
   {
     description: "Return the name of the agent connected to ShareLane.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
   },
   async () => ({
     content: [
@@ -51,6 +63,12 @@ server.registerTool(
   "note",
   {
     description: "Append a note to this project's shared ShareLane notebook.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     inputSchema: {
       text: z.string().trim().min(1).describe("Note to share with other agents"),
     },
@@ -73,6 +91,12 @@ server.registerTool(
   "notes",
   {
     description: "Read all notes from this project's shared ShareLane notebook.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
   },
   async () => ({
     content: [
@@ -89,6 +113,12 @@ server.registerTool(
   {
     description:
       "Read the generated map of this project's shared context and see which chunks are relevant or stale.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
   },
   async () => ({
     content: [{ type: "text", text: contextMap() }],
@@ -100,6 +130,12 @@ server.registerTool(
   {
     description:
       "Read one shared context chunk after choosing it from the context map.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     inputSchema: {
       id: z
         .string()
@@ -117,6 +153,12 @@ server.registerTool(
   {
     description:
       "Create or update one context chunk. This also refreshes MAP.md and the full-text search index.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     inputSchema: {
       id: z
         .string()
@@ -154,6 +196,12 @@ server.registerTool(
   {
     description:
       "Full-text search across shared context chunks and progress journal entries.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     inputSchema: {
       query: z.string().trim().min(1).describe("Words to find"),
       limit: z.number().int().min(1).max(20).optional().describe("Maximum results"),
@@ -179,6 +227,12 @@ server.registerTool(
   {
     description:
       "Add a dated progress note to the shared journal so work can be searched and handed off.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     inputSchema: {
       task: z.string().trim().min(1).describe("Task name or id"),
       note: z.string().trim().min(1).describe("Concise progress update"),

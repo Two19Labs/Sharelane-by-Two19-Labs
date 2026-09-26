@@ -76,6 +76,13 @@ test("lists all tools through Phase 1", async () => {
       "log_progress",
     ],
   );
+
+  const tools = new Map(result.tools.map((tool) => [tool.name, tool]));
+  assert.equal(tools.get("context_map")?.annotations?.readOnlyHint, true);
+  assert.equal(tools.get("search")?.annotations?.openWorldHint, false);
+  assert.equal(tools.get("update_chunk")?.annotations?.readOnlyHint, false);
+  assert.equal(tools.get("update_chunk")?.annotations?.destructiveHint, true);
+  assert.equal(tools.get("log_progress")?.annotations?.destructiveHint, false);
 });
 
 test("ping and whoami return the expected values", async () => {

@@ -38,6 +38,9 @@ Every decision made so far, and why. Add new ones at the bottom of the right tab
 | 27 | Use Node 24's built-in `node:sqlite` module, with WAL mode and a 5-second busy timeout, instead of adding `better-sqlite3` | A local probe proved that this Node build includes SQLite 3.53.3 with FTS5; the built-in module meets Phase 1 needs without another native dependency |
 | 28 | Store each context chunk's metadata in a small ShareLane frontmatter header, with `covers-files` represented as a JSON string array; make `sharelane init` repeatable and protect existing chunk content | The files remain ordinary readable Markdown, no YAML dependency is needed, and rerunning setup is safe in an established project |
 | 29 | Limit each chunk body to 12,000 characters and reject larger `update_chunk` calls with “compact this first” | This is roughly a few thousand tokens: large enough for useful topic context but small enough to preserve progressive disclosure |
+| 30 | Commit `.sharelane/context/` Markdown files to Git, while keeping the SQLite database, WAL files, raw journal, and legacy notes local and ignored | The useful curated context should travel with the project and remain reviewable in diffs; replaceable indexes and noisy runtime logs should not create Git churn |
+| 31 | Give every MCP tool accurate safety annotations, and pre-approve only the trusted local `sharelane` server in Codex's server-specific configuration | Codex otherwise blocks unattended MCP calls under its `never` global approval policy; the narrow server setting enables ShareLane without weakening approval rules for commands or other servers |
+| 32 | Save a SHA-256 fingerprint of every chunk's covered file contents when the chunk is updated; retain the Git-timestamp check as a fallback for older chunks | Content fingerprints avoid falsely marking context stale when source and context are committed together, while still detecting committed, uncommitted, and newly created file changes |
 
 ## Proposed — need your yes/no
 
@@ -55,6 +58,6 @@ Every decision made so far, and why. Add new ones at the bottom of the right tab
 ## Still undecided
 
 - How a finished worker's copy (worktree) gets merged: automatically, or ask you first?
-- Should `.sharelane/context/` be committed to git (shared with teammates) or kept private?
+- ~~Should `.sharelane/context/` be committed to git (shared with teammates) or kept private?~~ Resolved by decision 30: commit it.
 - How long a "name-on-it" claim lasts before it expires.
 - Which similar tools exist already (e.g. MCP Agent Mail, Zen/PAL MCP) and how ShareLane is different. Check before launch.

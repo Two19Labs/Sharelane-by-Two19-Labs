@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -7,7 +8,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join, relative } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { getShareLanePaths, openDatabase } from "./database.js";
 
@@ -20,6 +21,7 @@ export interface ChunkMetadata {
   coversFiles: string[];
   updatedAt: string;
   filePath: string;
+  sourceHash?: string;
 }
 
 export interface Chunk extends ChunkMetadata {
@@ -114,6 +116,7 @@ export function formatChunk(chunk: Chunk): string {
     `read-when: ${chunk.readWhen}`,
     `covers-files: ${JSON.stringify(chunk.coversFiles)}`,
     `updated-at: ${chunk.updatedAt}`,
+    ...(chunk.sourceHash ? [`source-hash: ${chunk.sourceHash}`] : []),
     "---",
     "",
     chunk.content.trimEnd(),
@@ -145,6 +148,7 @@ export function parseChunk(source: string, id: string, filePath: string): Chunk 
   const readWhen = fields.get("read-when");
   const updatedAt = fields.get("updated-at");
   const rawCoversFiles = fields.get("covers-files");
+  const sourceHash = fields.get("source-hash") || undefined;
   if (!title || !readWhen || !updatedAt || rawCoversFiles === undefined) {
     throw new Error(
       `${basename(filePath)} must define title, read-when, covers-files, and updated-at.`,
@@ -180,6 +184,7 @@ export function parseChunk(source: string, id: string, filePath: string): Chunk 
     coversFiles,
     updatedAt,
     filePath,
+    sourceHash,
     content,
   };
 }
@@ -268,6 +273,57 @@ function pathspec(pattern: string): string {
   return /[*?\[]/.test(normalized) ? `:(glob)${normalized}` : normalized;
 }
 
+function computeSourceHash(
+  patterns: string[],
+  projectRoot: string,
+): string | undefined {
+  if (patterns.length === 0) {
+    return undefined;
+  }
+
+  const listed = spawnSync(
+    "git",
+    [
+      "ls-files",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "-z",
+      "--",
+      ...patterns.map(pathspec),
+    ],
+    {
+      cwd: projectRoot,
+      encoding: "utf8",
+      windowsHide: true,
+    },
+  );
+  if (listed.status !== 0) {
+    return undefined;
+  }
+
+  const files = listed.stdout
+    .split("\0")
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right));
+  const hash = createHash("sha256");
+  for (const file of files) {
+    hash.update(file);
+    hash.update("\0");
+    try {
+      hash.update(readFileSync(resolve(projectRoot, file)));
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        hash.update("<missing>");
+      } else {
+        throw error;
+      }
+    }
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
 export function isChunkStale(
   chunk: ChunkMetadata,
   projectRoot = process.cwd(),
@@ -277,6 +333,11 @@ export function isChunkStale(
   }
 
   const patterns = chunk.coversFiles.map(pathspec);
+  if (chunk.sourceHash) {
+    return computeSourceHash(chunk.coversFiles, projectRoot) !== chunk.sourceHash;
+  }
+
+  // Older chunks without a source fingerprint use the timestamp fallback.
   const status = spawnSync("git", ["status", "--porcelain", "--", ...patterns], {
     cwd: projectRoot,
     encoding: "utf8",
@@ -438,6 +499,10 @@ export function updateChunk(
     coversFiles: input.coversFiles ?? existing?.coversFiles ?? [],
     updatedAt: new Date().toISOString(),
     filePath,
+    sourceHash: computeSourceHash(
+      input.coversFiles ?? existing?.coversFiles ?? [],
+      projectRoot,
+    ),
     content: input.content,
   };
 
