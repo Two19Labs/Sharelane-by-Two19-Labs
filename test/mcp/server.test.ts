@@ -60,11 +60,21 @@ after(async () => {
   await rm(projectRoot, { recursive: true, force: true });
 });
 
-test("lists all Phase 0 tools", async () => {
+test("lists all tools through Phase 1", async () => {
   const result = await client.listTools();
   assert.deepEqual(
     result.tools.map((tool) => tool.name),
-    ["ping", "whoami", "note", "notes"],
+    [
+      "ping",
+      "whoami",
+      "note",
+      "notes",
+      "context_map",
+      "read_chunk",
+      "update_chunk",
+      "search",
+      "log_progress",
+    ],
   );
 });
 
@@ -97,4 +107,48 @@ test("note writes shared state that notes reads back", async () => {
     "utf8",
   );
   assert.equal(fileContents, "Claude left this for Codex.\n");
+});
+
+test("Phase 1 context tools update, read, search, and journal shared memory", async () => {
+  const map = await client.callTool({ name: "context_map", arguments: {} });
+  assert.match(firstText(map), /# ShareLane context map/);
+
+  const updated = await client.callTool({
+    name: "update_chunk",
+    arguments: {
+      id: "architecture",
+      content: "# Architecture\n\nThe MCP pipeline uses a silver compass.",
+      title: "Architecture",
+      readWhen: "Working on MCP message flow.",
+      coversFiles: ["src/mcp/**"],
+    },
+  });
+  assert.match(firstText(updated), /MAP\.md and search index regenerated/);
+
+  const chunk = await client.callTool({
+    name: "read_chunk",
+    arguments: { id: "architecture" },
+  });
+  assert.match(firstText(chunk), /silver compass/);
+
+  const search = await client.callTool({
+    name: "search",
+    arguments: { query: "silver compass" },
+  });
+  assert.match(firstText(search), /chunk:architecture/);
+
+  const progress = await client.callTool({
+    name: "log_progress",
+    arguments: {
+      task: "mcp-test",
+      note: "Verified the amber journal marker.",
+    },
+  });
+  assert.match(firstText(progress), /as test-agent/);
+
+  const journalSearch = await client.callTool({
+    name: "search",
+    arguments: { query: "amber journal" },
+  });
+  assert.match(firstText(journalSearch), /journal:journal\//);
 });
