@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "sharelane": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "node_modules/tsx/dist/cli.mjs",
+        "src/mcp/server.ts"
+      ],
+      "env": {
+        "SHARELANE_AGENT": "claude"
+      }
+    }
+  }
+}
