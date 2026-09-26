@@ -1,0 +1,16 @@
+# Installed packages (restored with npm install)
+node_modules/
+
+# Generated build and test output
+dist/
+coverage/
+
+# Local logs and environment secrets
+*.log
+.env
+.env.*
+!.env.example
+
+# Operating-system files
+.DS_Store
+Thumbs.db
