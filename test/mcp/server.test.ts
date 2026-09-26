@@ -159,3 +159,16 @@ test("Phase 1 context tools update, read, search, and journal shared memory", as
   });
   assert.match(firstText(journalSearch), /journal:journal\//);
 });
+
+test("update_chunk returns the compaction message through MCP at the size cap", async () => {
+  const result = await client.callTool({
+    name: "update_chunk",
+    arguments: {
+      id: "architecture",
+      content: "x".repeat(12_001),
+    },
+  });
+
+  assert.equal(result.isError, true);
+  assert.match(firstText(result), /compact this first/i);
+});
