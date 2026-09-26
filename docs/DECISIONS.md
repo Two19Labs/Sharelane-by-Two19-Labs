@@ -35,6 +35,7 @@ Every decision made so far, and why. Add new ones at the bottom of the right tab
 | 24 | Agent MCP configurations identify their caller with the `SHARELANE_AGENT` environment variable; `whoami()` returns `unknown` when it is absent | A project-prefixed name avoids collisions and gives every adapter one simple, shared convention |
 | 25 | Treat `.sharelane/notes.txt` as local runtime state and ignore it in Git; this does not decide whether future `.sharelane/context/` files are committed | Temporary shared notes should not create repository noise, while the context-sharing policy is still an open question |
 | 26 | Keep a repository-level `GLOBAL_CONTEXT.md` work ledger, and use `AGENTS.md` to require compatible agents to read it before work and append a concise handoff before finishing | Future agents need one persistent, human-readable record of completed work, checks, current state, and the exact next step; concise entries avoid turning it into an expensive transcript |
+| 27 | Use Node 24's built-in `node:sqlite` module, with WAL mode and a 5-second busy timeout, instead of adding `better-sqlite3` | A local probe proved that this Node build includes SQLite 3.53.3 with FTS5; the built-in module meets Phase 1 needs without another native dependency |
 
 ## Proposed — need your yes/no
 
