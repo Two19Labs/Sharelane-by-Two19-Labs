@@ -1,6 +1,6 @@
 # ShareLane — Design
 
-> Status: **draft, pre-build**. Nothing here is implemented yet. This file is the source of truth for what we're building and why; update it when a decision changes.
+> Status: **draft; Phase 0 implemented**. This file is the source of truth for what we're building and why; update it when a decision changes.
 
 ## 1. What ShareLane is
 
