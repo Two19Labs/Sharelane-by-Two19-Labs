@@ -2,6 +2,7 @@
 
 import { initializeContext, relativeContextPath } from "./core/context.js";
 import { installAgentInstructions } from "./core/instructions.js";
+import { runAgent } from "./core/runner.js";
 
 function usage(): string {
   return [
@@ -9,14 +10,29 @@ function usage(): string {
     "",
     "Usage:",
     "  npm run sharelane -- init",
+    "  npm run sharelane -- run <agent> <prompt>",
     "",
     "Commands:",
     "  init   Create the shared context map, starter chunks, database, and agent instructions.",
+    "  run    Ask one configured agent to do a task and wait for its answer.",
   ].join("\n");
 }
 
-function run(): void {
+async function run(): Promise<void> {
   const [command, ...extra] = process.argv.slice(2);
+  if (command === "run") {
+    const [agent, ...promptParts] = extra;
+    const prompt = promptParts.join(" ").trim();
+    if (!agent || !prompt) {
+      throw new Error("run needs an agent name and a prompt.");
+    }
+    const result = await runAgent({ agent, prompt });
+    console.log(result.finalMessage);
+    console.log(`Session: ${result.sessionId}`);
+    console.log(`Log: ${relativeContextPath(result.logPath, process.cwd())}`);
+    return;
+  }
+
   if (command !== "init" || extra.length > 0) {
     console.log(usage());
     process.exitCode = command ? 1 : 0;
@@ -41,9 +57,9 @@ function run(): void {
 }
 
 try {
-  run();
+  await run();
 } catch (error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`ShareLane init failed: ${message}`);
+  console.error(`ShareLane failed: ${message}`);
   process.exitCode = 1;
 }

@@ -1,0 +1,39 @@
+const [format, prompt, resumedSession] = process.argv.slice(2);
+const sessionId = resumedSession || "fake-session-123";
+
+if (format === "codex-jsonl") {
+  console.log(JSON.stringify({ type: "thread.started", thread_id: sessionId }));
+  console.log(
+    JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: `Codex heard: ${prompt}` },
+    }),
+  );
+  console.log(
+    JSON.stringify({
+      type: "turn.completed",
+      usage: {
+        input_tokens: 12,
+        cached_input_tokens: 3,
+        output_tokens: 5,
+        reasoning_output_tokens: 2,
+      },
+    }),
+  );
+} else if (format === "claude-json") {
+  console.log(
+    JSON.stringify({
+      session_id: sessionId,
+      result: `Claude heard: ${prompt}`,
+      usage: {
+        input_tokens: 9,
+        cache_creation_input_tokens: 2,
+        cache_read_input_tokens: 4,
+        output_tokens: 6,
+      },
+    }),
+  );
+} else {
+  console.error(`Unknown fake format: ${format}`);
+  process.exitCode = 2;
+}

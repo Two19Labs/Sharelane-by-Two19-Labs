@@ -14,6 +14,7 @@ coverage/
 # Phase 0's local shared notebook (context commit policy is still undecided)
 .sharelane/notes.txt
 .sharelane/journal/
+.sharelane/runs/
 .sharelane/sharelane.db
 .sharelane/sharelane.db-shm
 .sharelane/sharelane.db-wal

@@ -43,6 +43,7 @@ Every decision made so far, and why. Add new ones at the bottom of the right tab
 | 32 | Save a SHA-256 fingerprint of every chunk's covered file contents when the chunk is updated; retain the Git-timestamp check as a fallback for older chunks | Content fingerprints avoid falsely marking context stale when source and context are committed together, while still detecting committed, uncommitted, and newly created file changes |
 | 33 | Use Node's built-in `node:test` runner during the early phases instead of adding Vitest | The built-in runner already supports the protocol, temporary-project, and multi-process tests ShareLane needs, so another development dependency would not yet provide enough value |
 | 34 | Describe agent commands in `src/adapters/agents.yaml`, parse it with the `yaml` package, validate it with Zod, and always spawn argument arrays with no shell | YAML keeps adding an agent configuration-only; a maintained parser avoids a fragile home-grown subset; argument arrays prevent prompts containing quotes or shell symbols from becoming commands |
+| 35 | Normalize Claude JSON and Codex JSON-lines output into one internal result, and keep raw run logs under ignored `.sharelane/runs/` | The rest of ShareLane can treat agents alike while local raw evidence remains available for debugging without creating Git noise |
 
 ## Proposed — need your yes/no
 
