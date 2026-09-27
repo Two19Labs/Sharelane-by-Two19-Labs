@@ -288,3 +288,58 @@ test("reports a missing task supervisor as orphaned without changing the databas
     await rm(projectRoot, { recursive: true, force: true });
   }
 });
+
+test(
+  "Windows broker launches a worker outside the caller's process tree",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "sharelane-broker-"));
+    const configPath = join(projectRoot, "agents.yaml");
+    await writeFile(
+      configPath,
+      stringify({
+        version: 1,
+        agents: {
+          fake: {
+            displayName: "Fake Agent",
+            command: process.execPath,
+            run: { args: [fixturePath, "codex-jsonl", "{prompt}"] },
+            resume: {
+              args: [fixturePath, "codex-jsonl", "{prompt}", "{session}"],
+            },
+            output: "codex-jsonl",
+            instructionsFile: "AGENTS.md",
+          },
+        },
+      }),
+      "utf8",
+    );
+    const previousConfig = process.env.SHARELANE_AGENTS_CONFIG;
+    process.env.SHARELANE_AGENTS_CONFIG = configPath;
+
+    try {
+      const delegated = delegateTask({
+        agent: "fake",
+        callerAgent: "test",
+        prompt: "brokered work",
+        projectRoot,
+      });
+      assert.ok(delegated.workerPid);
+      const finished = await waitUntilFinished(delegated.id, projectRoot);
+      assert.equal(finished.status, "completed", finished.error ?? "broker failed");
+      assert.match(finished.result ?? "", /Request:\nbrokered work/);
+    } finally {
+      if (previousConfig === undefined) {
+        delete process.env.SHARELANE_AGENTS_CONFIG;
+      } else {
+        process.env.SHARELANE_AGENTS_CONFIG = previousConfig;
+      }
+      await rm(projectRoot, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      });
+    }
+  },
+);

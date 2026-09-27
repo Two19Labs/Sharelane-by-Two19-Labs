@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -297,6 +297,22 @@ function launchTaskWorker(
   projectRoot: string,
   env?: NodeJS.ProcessEnv,
 ): ShareLaneTask {
+  const configPath =
+    env?.SHARELANE_AGENTS_CONFIG ?? process.env.SHARELANE_AGENTS_CONFIG ?? "";
+  if (process.platform === "win32" && env === undefined) {
+    const workerPid = launchWindowsBrokeredWorker(
+      task.id,
+      projectRoot,
+      configPath,
+    );
+    return updateTask(
+      task.id,
+      { worker_pid: workerPid, updated_at: new Date().toISOString() },
+      projectRoot,
+      ["queued"],
+    ).task;
+  }
+
   const child = spawn(process.execPath, [tsxPath, workerPath, task.id], {
     cwd: projectRoot,
     env: {
@@ -317,18 +333,22 @@ function launchTaskWorker(
     failTask(task.id, `Could not start task worker: ${error.message}`, projectRoot);
   });
   child.once("exit", (code, signal) => {
-    const current = getTask(task.id, projectRoot);
-    if (
-      (current.status === "queued" ||
-        current.status === "running" ||
-        current.status === "orphaned") &&
-      current.workerPid === child.pid
-    ) {
-      failTask(
-        task.id,
-        `Task supervisor exited before recording a result (code ${code ?? "none"}, signal ${signal ?? "none"}).`,
-        projectRoot,
-      );
+    try {
+      const current = getTask(task.id, projectRoot);
+      if (
+        (current.status === "queued" ||
+          current.status === "running" ||
+          current.status === "orphaned") &&
+        current.workerPid === child.pid
+      ) {
+        failTask(
+          task.id,
+          `Task supervisor exited before recording a result (code ${code ?? "none"}, signal ${signal ?? "none"}).`,
+          projectRoot,
+        );
+      }
+    } catch {
+      // The project or task may have been intentionally removed after completion.
     }
   });
   child.unref();
@@ -338,6 +358,67 @@ function launchTaskWorker(
     projectRoot,
     ["queued"],
   ).task;
+}
+
+function quoteWindowsArgument(argument: string): string {
+  const escaped = argument
+    .replace(/(\\*)"/g, "$1$1\\\"")
+    .replace(/(\\+)$/, "$1$1");
+  return `"${escaped}"`;
+}
+
+function launchWindowsBrokeredWorker(
+  taskId: string,
+  projectRoot: string,
+  configPath: string,
+): number {
+  const commandLine = [
+    process.execPath,
+    tsxPath,
+    workerPath,
+    taskId,
+    projectRoot,
+    configPath,
+  ]
+    .map(quoteWindowsArgument)
+    .join(" ");
+  const brokerScript = [
+    "$result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $env:SHARELANE_WORKER_COMMAND }",
+    "$result | Select-Object ProcessId,ReturnValue | ConvertTo-Json -Compress",
+    "if ($result.ReturnValue -ne 0) { exit $result.ReturnValue }",
+  ].join("; ");
+  const launched = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", brokerScript],
+    {
+      encoding: "utf8",
+      env: { ...process.env, SHARELANE_WORKER_COMMAND: commandLine },
+      shell: false,
+      windowsHide: true,
+      timeout: 10_000,
+    },
+  );
+  if (launched.error) throw launched.error;
+  if (launched.status !== 0) {
+    throw new Error(
+      `Windows could not broker the detached task supervisor: ${launched.stderr.trim() || `exit ${launched.status}`}`,
+    );
+  }
+  let result: unknown;
+  try {
+    result = JSON.parse(launched.stdout.trim());
+  } catch {
+    throw new Error("Windows returned an invalid task-supervisor launch result.");
+  }
+  if (
+    typeof result !== "object" ||
+    result === null ||
+    !("ProcessId" in result) ||
+    typeof result.ProcessId !== "number"
+  ) {
+    throw new Error("Windows did not return the task supervisor's process ID.");
+  }
+  return result.ProcessId;
 }
 
 export function markTaskRunning(
@@ -533,7 +614,13 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
     database.close();
   }
   writeTaskFile(task, projectRoot);
-  return launchTaskWorker(task, projectRoot, input.env);
+  try {
+    return launchTaskWorker(task, projectRoot, input.env);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    failTask(task.id, `Could not launch task supervisor: ${message}`, projectRoot);
+    throw error;
+  }
 }
 
 export function replyToTask(
@@ -581,7 +668,13 @@ export function replyToTask(
   }
   const queued = getTask(taskId, projectRoot);
   writeTaskFile(queued, projectRoot);
-  return launchTaskWorker(queued, projectRoot, options.env);
+  try {
+    return launchTaskWorker(queued, projectRoot, options.env);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    failTask(task.id, `Could not launch task supervisor: ${message}`, projectRoot);
+    throw error;
+  }
 }
 
 export async function waitForTask(
