@@ -6,6 +6,8 @@ INSERT INTO schema_info (version)
 SELECT 1
 WHERE NOT EXISTS (SELECT 1 FROM schema_info);
 
+UPDATE schema_info SET version = 2;
+
 CREATE TABLE IF NOT EXISTS chunks (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -34,3 +36,30 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
   body,
   tokenize = 'unicode61 remove_diacritics 2'
 );
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT PRIMARY KEY,
+  agent TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+  parent_id TEXT REFERENCES tasks(id),
+  depth INTEGER NOT NULL DEFAULT 1,
+  session_id TEXT,
+  result TEXT,
+  error TEXT,
+  usage_json TEXT CHECK (usage_json IS NULL OR json_valid(usage_json)),
+  task_file TEXT NOT NULL,
+  log_path TEXT NOT NULL,
+  worker_pid INTEGER,
+  agent_pid INTEGER,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS tasks_parent_created_at
+ON tasks (parent_id, created_at);
+
+CREATE INDEX IF NOT EXISTS tasks_status_updated_at
+ON tasks (status, updated_at DESC);

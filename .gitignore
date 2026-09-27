@@ -15,6 +15,7 @@ coverage/
 .sharelane/notes.txt
 .sharelane/journal/
 .sharelane/runs/
+.sharelane/tasks/
 .sharelane/sharelane.db
 .sharelane/sharelane.db-shm
 .sharelane/sharelane.db-wal

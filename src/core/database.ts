@@ -15,6 +15,7 @@ export interface ShareLanePaths {
   contextDir: string;
   map: string;
   journalDir: string;
+  tasksDir: string;
 }
 
 export function getShareLanePaths(projectRoot = process.cwd()): ShareLanePaths {
@@ -28,6 +29,7 @@ export function getShareLanePaths(projectRoot = process.cwd()): ShareLanePaths {
     contextDir,
     map: join(contextDir, "MAP.md"),
     journalDir: join(shareLaneDir, "journal"),
+    tasksDir: join(shareLaneDir, "tasks"),
   };
 }
 

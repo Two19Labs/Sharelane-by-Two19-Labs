@@ -73,6 +73,7 @@ test("lists all tools through Phase 1", async () => {
       "read_chunk",
       "update_chunk",
       "search",
+      "delegate",
       "log_progress",
     ],
   );
@@ -83,6 +84,7 @@ test("lists all tools through Phase 1", async () => {
   assert.equal(tools.get("update_chunk")?.annotations?.readOnlyHint, false);
   assert.equal(tools.get("update_chunk")?.annotations?.destructiveHint, true);
   assert.equal(tools.get("log_progress")?.annotations?.destructiveHint, false);
+  assert.equal(tools.get("delegate")?.annotations?.readOnlyHint, false);
 });
 
 test("ping and whoami return the expected values", async () => {

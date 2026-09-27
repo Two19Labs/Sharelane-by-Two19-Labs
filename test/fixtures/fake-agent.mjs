@@ -1,6 +1,11 @@
 const [format, prompt, resumedSession] = process.argv.slice(2);
 const sessionId = resumedSession || "fake-session-123";
 
+const delay = Number(process.env.FAKE_AGENT_DELAY_MS || 0);
+if (delay > 0) {
+  await new Promise((resolve) => setTimeout(resolve, delay));
+}
+
 if (format === "codex-jsonl") {
   console.log(JSON.stringify({ type: "thread.started", thread_id: sessionId }));
   console.log(

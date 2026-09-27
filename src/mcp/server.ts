@@ -8,6 +8,7 @@ import {
 } from "../core/memory.js";
 import { readChunk, updateChunk } from "../core/context.js";
 import { appendNote, readNotes } from "../core/notes.js";
+import { delegateTask } from "../core/tasks.js";
 
 const server = new McpServer({
   name: "sharelane",
@@ -219,6 +220,35 @@ server.registerTool(
             )
             .join("\n\n");
     return { content: [{ type: "text", text }] };
+  },
+);
+
+server.registerTool(
+  "delegate",
+  {
+    description:
+      "Start a configured coding agent in the background and immediately return a task ID.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      agent: z.string().trim().min(1).describe("Configured agent name"),
+      task: z.string().trim().min(1).describe("Work for the agent to perform"),
+    },
+  },
+  async ({ agent, task }) => {
+    const delegated = delegateTask({ agent, prompt: task });
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Delegated to ${agent}. Task ID: ${delegated.id}. Status: ${delegated.status}.`,
+        },
+      ],
+    };
   },
 );
 
