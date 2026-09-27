@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { stringify } from "yaml";
+import { getShareLanePaths, openDatabase } from "../../src/core/database.js";
 import {
   cancelTask,
   delegateTask,
@@ -241,5 +242,49 @@ test("cancellation wins over a running worker", async () => {
       maxRetries: 10,
       retryDelay: 100,
     });
+  }
+});
+
+test("reports a missing task supervisor as orphaned without changing the database", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "sharelane-orphan-"));
+  try {
+    const now = new Date().toISOString();
+    const paths = getShareLanePaths(projectRoot);
+    const database = openDatabase(projectRoot);
+    database
+      .prepare(
+        `INSERT INTO tasks (
+          id, agent, prompt, status, depth, task_file, log_path, worker_pid,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "task-orphan-test",
+        "fake",
+        "stale work",
+        "running",
+        1,
+        join(paths.tasksDir, "task-orphan-test.md"),
+        join(paths.tasksDir, "task-orphan-test.log"),
+        2_147_483_647,
+        now,
+        now,
+      );
+    database.close();
+
+    const observed = getTask("task-orphan-test", projectRoot);
+    assert.equal(observed.status, "orphaned");
+    assert.match(observed.error ?? "", /supervisor is no longer running/);
+
+    const unchanged = openDatabase(projectRoot);
+    const row = unchanged
+      .prepare("SELECT status FROM tasks WHERE id = ?")
+      .get("task-orphan-test") as { status: string };
+    unchanged.close();
+    assert.equal(row.status, "running");
+
+    assert.equal(cancelTask("task-orphan-test", projectRoot).status, "cancelled");
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
   }
 });

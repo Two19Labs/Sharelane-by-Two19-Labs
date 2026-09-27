@@ -12,7 +12,8 @@ export type TaskStatus =
   | "running"
   | "completed"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "orphaned";
 
 export interface TaskMessage {
   role: "user" | "assistant";
@@ -89,6 +90,12 @@ export interface WaitTaskResult {
 }
 
 const terminalStatuses = new Set<TaskStatus>([
+  "completed",
+  "failed",
+  "cancelled",
+  "orphaned",
+]);
+const persistedTerminalStatuses = new Set<TaskStatus>([
   "completed",
   "failed",
   "cancelled",
@@ -210,9 +217,33 @@ export function getTask(
       | TaskRow
       | undefined;
     if (!row) throw new Error(`Unknown task "${taskId}".`);
-    return fromRow(row);
+    const task = fromRow(row);
+    if (
+      (task.status === "queued" || task.status === "running") &&
+      task.workerPid !== undefined &&
+      !isProcessAlive(task.workerPid)
+    ) {
+      return {
+        ...task,
+        status: "orphaned",
+        error:
+          "The detached task supervisor is no longer running. Cancel this stale task and delegate it again.",
+      };
+    }
+    return task;
   } finally {
     database.close();
+  }
+}
+
+function isProcessAlive(processId: number): boolean {
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH" || code === "EINVAL") return false;
+    return true;
   }
 }
 
@@ -284,6 +315,21 @@ function launchTaskWorker(
   });
   child.once("error", (error) => {
     failTask(task.id, `Could not start task worker: ${error.message}`, projectRoot);
+  });
+  child.once("exit", (code, signal) => {
+    const current = getTask(task.id, projectRoot);
+    if (
+      (current.status === "queued" ||
+        current.status === "running" ||
+        current.status === "orphaned") &&
+      current.workerPid === child.pid
+    ) {
+      failTask(
+        task.id,
+        `Task supervisor exited before recording a result (code ${code ?? "none"}, signal ${signal ?? "none"}).`,
+        projectRoot,
+      );
+    }
   });
   child.unref();
   return updateTask(
@@ -567,7 +613,7 @@ export function cancelTask(
   projectRoot = process.cwd(),
 ): ShareLaneTask {
   const before = getTask(taskId, projectRoot);
-  if (terminalStatuses.has(before.status)) {
+  if (persistedTerminalStatuses.has(before.status)) {
     throw new Error(
       `Task "${taskId}" is already ${before.status} and cannot be cancelled.`,
     );

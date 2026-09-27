@@ -48,6 +48,7 @@ Every decision made so far, and why. Add new ones at the bottom of the right tab
 | 37 | Store task conversation messages separately, and make `reply` resume the saved CLI session on the same task ID; guard final state changes in SQLite so cancellation wins races | Follow-ups retain the worker's context and remain easy to inspect, while a near-simultaneous worker exit cannot incorrectly overwrite a user's cancellation |
 | 38 | Track the complete agent path for each task, allow at most three delegated levels, and reject a target already present in that path | A readable lineage makes both direct and indirect delegation loops detectable while still allowing useful short delegation chains; this accepts proposal P6 for Phase 2 |
 | 39 | Prepend each new delegated session with its task ID, focused worker instructions, and the current generated context map; do not repeat that wrapper for resumed replies | A worker begins with enough project orientation to choose relevant context without loading everything, while follow-ups benefit from the context already held by the resumed CLI session |
+| 40 | If an active task's detached supervisor PID no longer exists, report it as `orphaned` without mutating state during `status`/`wait`; allow explicit `cancel` to close it, and watch quick supervisor exits while the launcher is alive | A process killed by the operating system must not leave callers waiting forever, while read-only task inspection must remain truthfully side-effect free |
 
 ## Proposed — need your yes/no
 
