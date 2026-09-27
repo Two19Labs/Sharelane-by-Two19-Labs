@@ -9,6 +9,7 @@ import {
   cancelTask,
   delegateTask,
   getTask,
+  getTaskLineage,
   listTaskMessages,
   replyToTask,
   waitForTask,
@@ -66,6 +67,7 @@ test("delegation returns a task ID while a detached worker continues", async () 
       env: {
         SHARELANE_AGENTS_CONFIG: configPath,
         FAKE_AGENT_DELAY_MS: "500",
+        FAKE_REPORT_SHARELANE_ENV: "1",
       },
     });
     assert.match(delegated.id, /^task-[0-9a-f-]+$/);
@@ -74,7 +76,15 @@ test("delegation returns a task ID while a detached worker continues", async () 
 
     const finished = await waitUntilFinished(delegated.id, projectRoot);
     assert.equal(finished.status, "completed", finished.error ?? "task failed");
-    assert.equal(finished.result, "Codex heard: do the slow work");
+    assert.match(finished.result ?? "", /You are a ShareLane delegated worker/);
+    assert.match(finished.result ?? "", /Request:\ndo the slow work/);
+    assert.match(finished.result ?? "", /Project context map:\n# ShareLane context map/);
+    assert.match(
+      finished.result ?? "",
+      new RegExp(`"taskId":"${delegated.id}"`),
+    );
+    assert.match(finished.result ?? "", /"parent":""/);
+    assert.match(finished.result ?? "", /"depth":"1"/);
     assert.equal(finished.sessionId, "fake-session-123");
     assert.match(await readFile(finished.taskFile, "utf8"), /Status: completed/);
     assert.match(await readFile(finished.logPath, "utf8"), /Codex heard/);
@@ -99,6 +109,75 @@ test("delegation returns a task ID while a detached worker continues", async () 
     const waited = await waitForTask(delegated.id, 0, projectRoot);
     assert.equal(waited.timedOut, false);
     assert.equal(waited.task.status, "completed");
+  } finally {
+    await rm(projectRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
+  }
+});
+
+test("task lineage rejects cycles and delegation deeper than three levels", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "sharelane-lineage-"));
+  const configPath = join(projectRoot, "agents.yaml");
+  const fakeAdapter = {
+    displayName: "Fake Agent",
+    command: process.execPath,
+    run: { args: [fixturePath, "codex-jsonl", "{prompt}"] },
+    resume: {
+      args: [fixturePath, "codex-jsonl", "{prompt}", "{session}"],
+    },
+    output: "codex-jsonl",
+    instructionsFile: "AGENTS.md",
+  };
+  await writeFile(
+    configPath,
+    stringify({
+      version: 1,
+      agents: { claude: fakeAdapter, codex: fakeAdapter },
+    }),
+    "utf8",
+  );
+
+  try {
+    const delegated = delegateTask({
+      agent: "codex",
+      callerAgent: "claude",
+      prompt: "child work",
+      projectRoot,
+      env: { SHARELANE_AGENTS_CONFIG: configPath },
+    });
+    assert.deepEqual(getTaskLineage(delegated.id, projectRoot), [
+      "claude",
+      "codex",
+    ]);
+    assert.throws(
+      () =>
+        delegateTask({
+          agent: "claude",
+          callerAgent: "codex",
+          parentId: delegated.id,
+          prompt: "loop back",
+          projectRoot,
+          env: { SHARELANE_AGENTS_CONFIG: configPath },
+        }),
+      /Delegation cycle refused: claude -> codex -> claude/,
+    );
+    assert.throws(
+      () =>
+        delegateTask({
+          agent: "codex",
+          callerAgent: "claude",
+          depth: 4,
+          prompt: "too deep",
+          projectRoot,
+          env: { SHARELANE_AGENTS_CONFIG: configPath },
+        }),
+      /maximum depth of 3/,
+    );
+    await waitUntilFinished(delegated.id, projectRoot);
   } finally {
     await rm(projectRoot, {
       recursive: true,

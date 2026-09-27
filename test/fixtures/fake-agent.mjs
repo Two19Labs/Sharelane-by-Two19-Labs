@@ -6,12 +6,23 @@ if (delay > 0) {
   await new Promise((resolve) => setTimeout(resolve, delay));
 }
 
+const environmentReport = process.env.FAKE_REPORT_SHARELANE_ENV
+  ? `\nENV ${JSON.stringify({
+      taskId: process.env.SHARELANE_TASK_ID,
+      parent: process.env.SHARELANE_PARENT,
+      depth: process.env.SHARELANE_DEPTH,
+    })}`
+  : "";
+
 if (format === "codex-jsonl") {
   console.log(JSON.stringify({ type: "thread.started", thread_id: sessionId }));
   console.log(
     JSON.stringify({
       type: "item.completed",
-      item: { type: "agent_message", text: `Codex heard: ${prompt}` },
+      item: {
+        type: "agent_message",
+        text: `Codex heard: ${prompt}${environmentReport}`,
+      },
     }),
   );
   console.log(
@@ -29,7 +40,7 @@ if (format === "codex-jsonl") {
   console.log(
     JSON.stringify({
       session_id: sessionId,
-      result: `Claude heard: ${prompt}`,
+      result: `Claude heard: ${prompt}${environmentReport}`,
       usage: {
         input_tokens: 9,
         cache_creation_input_tokens: 2,

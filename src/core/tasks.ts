@@ -74,6 +74,7 @@ export interface DelegateTaskInput {
   projectRoot?: string;
   parentId?: string;
   depth?: number;
+  callerAgent?: string;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -143,6 +144,23 @@ export function listTaskMessages(
   }
 }
 
+export function getTaskLineage(
+  taskId: string,
+  projectRoot = process.cwd(),
+): string[] {
+  const database = openDatabase(projectRoot);
+  try {
+    const rows = database
+      .prepare(
+        "SELECT agent FROM task_lineage WHERE task_id = ? ORDER BY position",
+      )
+      .all(taskId) as unknown as Array<{ agent: string }>;
+    return rows.map((row) => row.agent);
+  } finally {
+    database.close();
+  }
+}
+
 function taskMarkdown(task: ShareLaneTask, projectRoot: string): string {
   const lines = [
     `# Task ${task.id}`,
@@ -158,6 +176,8 @@ function taskMarkdown(task: ShareLaneTask, projectRoot: string): string {
   if (task.sessionId) lines.push(`- Session: ${task.sessionId}`);
   if (task.startedAt) lines.push(`- Started: ${task.startedAt}`);
   if (task.finishedAt) lines.push(`- Finished: ${task.finishedAt}`);
+  const lineage = getTaskLineage(task.id, projectRoot);
+  if (lineage.length > 0) lines.push(`- Agent path: ${lineage.join(" -> ")}`);
 
   const messages = listTaskMessages(task.id, projectRoot);
   lines.push("", "## Conversation");
@@ -373,10 +393,35 @@ export function failTask(
 
 export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
   const projectRoot = input.projectRoot ?? process.cwd();
+  const inheritedEnvironment = { ...process.env, ...input.env };
   const registry = loadAgentRegistry(
-    input.env?.SHARELANE_AGENTS_CONFIG ?? process.env.SHARELANE_AGENTS_CONFIG,
+    inheritedEnvironment.SHARELANE_AGENTS_CONFIG,
   );
   getAgentAdapter(input.agent, registry);
+
+  const parentId =
+    input.parentId || inheritedEnvironment.SHARELANE_TASK_ID || undefined;
+  const callerAgent =
+    input.callerAgent || inheritedEnvironment.SHARELANE_AGENT || "unknown";
+  let depth = input.depth ?? 1;
+  let lineage = callerAgent === "unknown" ? [] : [callerAgent];
+  if (parentId) {
+    const parent = getTask(parentId, projectRoot);
+    depth = parent.depth + 1;
+    lineage = getTaskLineage(parentId, projectRoot);
+    if (lineage.length === 0) lineage = [parent.agent];
+  }
+  if (depth > 3) {
+    throw new Error(
+      `Delegation depth ${depth} exceeds ShareLane's maximum depth of 3.`,
+    );
+  }
+  if (lineage.includes(input.agent)) {
+    throw new Error(
+      `Delegation cycle refused: ${[...lineage, input.agent].join(" -> ")}.`,
+    );
+  }
+  lineage = [...lineage, input.agent];
 
   const id = `task-${randomUUID()}`;
   const now = new Date().toISOString();
@@ -388,8 +433,8 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
     agent: input.agent,
     prompt: input.prompt,
     status: "queued",
-    parentId: input.parentId,
-    depth: input.depth ?? 1,
+    parentId,
+    depth,
     taskFile,
     logPath,
     createdAt: now,
@@ -424,6 +469,12 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
         "INSERT INTO task_messages (task_id, role, content, created_at) VALUES (?, 'user', ?, ?)",
       )
       .run(task.id, task.prompt, now);
+    const insertLineage = database.prepare(
+      "INSERT INTO task_lineage (task_id, position, agent) VALUES (?, ?, ?)",
+    );
+    lineage.forEach((agent, position) => {
+      insertLineage.run(task.id, position, agent);
+    });
     database.exec("COMMIT");
   } catch (error) {
     try {

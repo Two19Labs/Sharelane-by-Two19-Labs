@@ -74,3 +74,10 @@ CREATE TABLE IF NOT EXISTS task_messages (
 
 CREATE INDEX IF NOT EXISTS task_messages_task_id_id
 ON task_messages (task_id, id);
+
+CREATE TABLE IF NOT EXISTS task_lineage (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  agent TEXT NOT NULL,
+  PRIMARY KEY (task_id, position)
+);

@@ -46,6 +46,8 @@ Every decision made so far, and why. Add new ones at the bottom of the right tab
 | 35 | Normalize Claude JSON and Codex JSON-lines output into one internal result, and keep raw run logs under ignored `.sharelane/runs/` | The rest of ShareLane can treat agents alike while local raw evidence remains available for debugging without creating Git noise |
 | 36 | Persist delegated tasks in SQLite plus human-readable local files under ignored `.sharelane/tasks/`, and launch a detached ShareLane supervisor for each task | The caller gets a task ID immediately; the supervisor can still record the agent's completion, failure, session, usage, and log after the calling tool has returned |
 | 37 | Store task conversation messages separately, and make `reply` resume the saved CLI session on the same task ID; guard final state changes in SQLite so cancellation wins races | Follow-ups retain the worker's context and remain easy to inspect, while a near-simultaneous worker exit cannot incorrectly overwrite a user's cancellation |
+| 38 | Track the complete agent path for each task, allow at most three delegated levels, and reject a target already present in that path | A readable lineage makes both direct and indirect delegation loops detectable while still allowing useful short delegation chains; this accepts proposal P6 for Phase 2 |
+| 39 | Prepend each new delegated session with its task ID, focused worker instructions, and the current generated context map; do not repeat that wrapper for resumed replies | A worker begins with enough project orientation to choose relevant context without loading everything, while follow-ups benefit from the context already held by the resumed CLI session |
 
 ## Proposed — need your yes/no
 
@@ -56,7 +58,7 @@ Every decision made so far, and why. Add new ones at the bottom of the right tab
 | P3 | Storage: SQLite for live state + markdown files for context (readable, committed to git) | Safe for several agents at once; context stays human-readable | Open |
 | P4 | Search: SQLite full-text search; no AI-based "semantic" search in v1 | Semantic search needs an API key or local model | Open |
 | P5 | Conflict protection in layers: worktrees → name-on-it claims (that expire) → duplicate-task warnings → blocking hooks where the CLI allows → watcher that flags unclaimed edits | Agents can ignore instructions, so no single layer is enough | Open |
-| P6 | Delegation depth limit of 3 | Stops loops while allowing normal chains | Open |
+| P6 | Delegation depth limit of 3 | Stops loops while allowing normal chains | Accepted and implemented by decision 38 |
 | P7 | Agents log progress after every step, so a handoff is always ready even after a sudden stop | Limits can hit mid-task | Open |
 | P8 | Handoff threshold around 90% of quota | Leaves room to write the handoff | Open |
 

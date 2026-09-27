@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { runAgent } from "./core/runner.js";
+import { contextMap } from "./core/memory.js";
 import {
   completeTask,
   failTask,
@@ -10,6 +11,30 @@ import {
   setTaskAgentProcess,
 } from "./core/tasks.js";
 
+function delegatedPrompt(
+  taskId: string,
+  request: string,
+  projectRoot: string,
+): string {
+  return [
+    "You are a ShareLane delegated worker.",
+    `Task ID: ${taskId}`,
+    "",
+    "Task instructions:",
+    "- Complete the request in the current project and verify your work.",
+    "- Use the context map below to choose any relevant context chunks; do not read every chunk automatically.",
+    "- Record meaningful progress with ShareLane's log_progress tool.",
+    "- Update relevant shared context when your work changes what future agents need to know.",
+    "- End with a concise summary of what changed and what checks passed.",
+    "",
+    "Request:",
+    request,
+    "",
+    "Project context map:",
+    contextMap(projectRoot),
+  ].join("\n");
+}
+
 async function main(): Promise<void> {
   const taskId = process.argv[2] || process.env.SHARELANE_TASK_ID;
   const projectRoot = process.env.SHARELANE_PROJECT_ROOT || process.cwd();
@@ -18,9 +43,12 @@ async function main(): Promise<void> {
   const task = markTaskRunning(taskId, projectRoot);
   if (task.status !== "running") return;
   try {
+    const latestPrompt = latestTaskPrompt(task.id, projectRoot);
     const result = await runAgent({
       agent: task.agent,
-      prompt: latestTaskPrompt(task.id, projectRoot),
+      prompt: task.sessionId
+        ? latestPrompt
+        : delegatedPrompt(task.id, latestPrompt, projectRoot),
       projectRoot,
       sessionId: task.sessionId,
       logPath: task.logPath,
