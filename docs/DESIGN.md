@@ -1,6 +1,6 @@
 # ShareLane — Design
 
-> Status: **draft; Phase 0 implemented**. This file is the source of truth for what we're building and why; update it when a decision changes.
+> Status: **draft; Phases 0–1 implemented**. This file is the source of truth for what we're building and why; update it when a decision changes.
 
 ## 1. What ShareLane is
 
@@ -138,8 +138,8 @@ Goal: every agent knows *where* to look without reading everything. Context is l
 
 **Keeping it fresh**
 - When an agent finishes a task, it writes what it learned back into the relevant chunk(s). This write-back step is part of every task.
-- Each chunk records which source files it covers. If those files change after the chunk was last updated, the chunk is marked **stale** in MAP.md and the dashboard.
-- Chunks have a size cap. Going over it triggers a compaction step (an agent summarizes the chunk), so it never grows into a 4,000-line file.
+- Each chunk records which source files it covers and a fingerprint of their contents. If those contents change after the chunk is updated, it is marked **stale** in MAP.md and the dashboard. Older chunks without a fingerprint fall back to Git timestamps.
+- Chunk bodies are capped at 12,000 characters. Going over the cap is refused with “compact this first,” so a chunk cannot silently grow into a giant context file.
 - The journal is folded into chunks periodically, then archived.
 
 **Visual map:** the dashboard renders the same data as a graph (areas ↔ files ↔ tasks ↔ agents). Staleness and active claims are shown on it.

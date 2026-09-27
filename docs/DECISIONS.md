@@ -41,6 +41,7 @@ Every decision made so far, and why. Add new ones at the bottom of the right tab
 | 30 | Commit `.sharelane/context/` Markdown files to Git, while keeping the SQLite database, WAL files, raw journal, and legacy notes local and ignored | The useful curated context should travel with the project and remain reviewable in diffs; replaceable indexes and noisy runtime logs should not create Git churn |
 | 31 | Give every MCP tool accurate safety annotations, and pre-approve only the trusted local `sharelane` server in Codex's server-specific configuration | Codex otherwise blocks unattended MCP calls under its `never` global approval policy; the narrow server setting enables ShareLane without weakening approval rules for commands or other servers |
 | 32 | Save a SHA-256 fingerprint of every chunk's covered file contents when the chunk is updated; retain the Git-timestamp check as a fallback for older chunks | Content fingerprints avoid falsely marking context stale when source and context are committed together, while still detecting committed, uncommitted, and newly created file changes |
+| 33 | Use Node's built-in `node:test` runner during the early phases instead of adding Vitest | The built-in runner already supports the protocol, temporary-project, and multi-process tests ShareLane needs, so another development dependency would not yet provide enough value |
 
 ## Proposed — need your yes/no
 
