@@ -60,7 +60,7 @@ after(async () => {
   await rm(projectRoot, { recursive: true, force: true });
 });
 
-test("lists all tools through Phase 1", async () => {
+test("lists context tools and Phase 2 task controls", async () => {
   const result = await client.listTools();
   assert.deepEqual(
     result.tools.map((tool) => tool.name),
@@ -74,6 +74,10 @@ test("lists all tools through Phase 1", async () => {
       "update_chunk",
       "search",
       "delegate",
+      "status",
+      "wait",
+      "reply",
+      "cancel",
       "log_progress",
     ],
   );
@@ -85,6 +89,11 @@ test("lists all tools through Phase 1", async () => {
   assert.equal(tools.get("update_chunk")?.annotations?.destructiveHint, true);
   assert.equal(tools.get("log_progress")?.annotations?.destructiveHint, false);
   assert.equal(tools.get("delegate")?.annotations?.readOnlyHint, false);
+  assert.equal(tools.get("delegate")?.annotations?.destructiveHint, true);
+  assert.equal(tools.get("status")?.annotations?.readOnlyHint, true);
+  assert.equal(tools.get("wait")?.annotations?.readOnlyHint, true);
+  assert.equal(tools.get("reply")?.annotations?.destructiveHint, true);
+  assert.equal(tools.get("cancel")?.annotations?.destructiveHint, true);
 });
 
 test("ping and whoami return the expected values", async () => {

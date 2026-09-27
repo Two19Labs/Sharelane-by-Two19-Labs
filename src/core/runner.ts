@@ -62,7 +62,7 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
   await mkdir(dirname(logPath), { recursive: true });
 
   const startedAt = new Date().toISOString();
-  const log = createWriteStream(logPath, { encoding: "utf8" });
+  const log = createWriteStream(logPath, { encoding: "utf8", flags: "a" });
   log.write(`ShareLane run: ${options.agent}\nStarted: ${startedAt}\n\n`);
 
   return await new Promise<AgentRunResult>((resolve, reject) => {

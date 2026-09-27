@@ -45,6 +45,7 @@ Every decision made so far, and why. Add new ones at the bottom of the right tab
 | 34 | Describe agent commands in `src/adapters/agents.yaml`, parse it with the `yaml` package, validate it with Zod, and always spawn argument arrays with no shell | YAML keeps adding an agent configuration-only; a maintained parser avoids a fragile home-grown subset; argument arrays prevent prompts containing quotes or shell symbols from becoming commands |
 | 35 | Normalize Claude JSON and Codex JSON-lines output into one internal result, and keep raw run logs under ignored `.sharelane/runs/` | The rest of ShareLane can treat agents alike while local raw evidence remains available for debugging without creating Git noise |
 | 36 | Persist delegated tasks in SQLite plus human-readable local files under ignored `.sharelane/tasks/`, and launch a detached ShareLane supervisor for each task | The caller gets a task ID immediately; the supervisor can still record the agent's completion, failure, session, usage, and log after the calling tool has returned |
+| 37 | Store task conversation messages separately, and make `reply` resume the saved CLI session on the same task ID; guard final state changes in SQLite so cancellation wins races | Follow-ups retain the worker's context and remain easy to inspect, while a near-simultaneous worker exit cannot incorrectly overwrite a user's cancellation |
 
 ## Proposed — need your yes/no
 

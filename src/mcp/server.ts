@@ -8,7 +8,26 @@ import {
 } from "../core/memory.js";
 import { readChunk, updateChunk } from "../core/context.js";
 import { appendNote, readNotes } from "../core/notes.js";
-import { delegateTask } from "../core/tasks.js";
+import {
+  cancelTask,
+  delegateTask,
+  getTask,
+  replyToTask,
+  waitForTask,
+  type ShareLaneTask,
+} from "../core/tasks.js";
+
+function taskStatusText(task: ShareLaneTask): string {
+  const lines = [
+    `Task ID: ${task.id}`,
+    `Agent: ${task.agent}`,
+    `Status: ${task.status}`,
+  ];
+  if (task.result) lines.push(`Result:\n${task.result}`);
+  if (task.error) lines.push(`Error:\n${task.error}`);
+  if (task.sessionId) lines.push(`Session: ${task.sessionId}`);
+  return lines.join("\n");
+}
 
 const server = new McpServer({
   name: "sharelane",
@@ -230,7 +249,7 @@ server.registerTool(
       "Start a configured coding agent in the background and immediately return a task ID.",
     annotations: {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: false,
     },
@@ -247,6 +266,114 @@ server.registerTool(
           type: "text",
           text: `Delegated to ${agent}. Task ID: ${delegated.id}. Status: ${delegated.status}.`,
         },
+      ],
+    };
+  },
+);
+
+server.registerTool(
+  "status",
+  {
+    description: "Read the current state and result of a delegated task.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      taskId: z.string().trim().min(1).describe("Task ID returned by delegate"),
+    },
+  },
+  async ({ taskId }) => ({
+    content: [{ type: "text", text: taskStatusText(getTask(taskId)) }],
+  }),
+);
+
+server.registerTool(
+  "wait",
+  {
+    description:
+      "Wait briefly for a delegated task to finish, or return its latest state when the timeout expires.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      taskId: z.string().trim().min(1).describe("Task ID returned by delegate"),
+      timeoutSeconds: z
+        .number()
+        .int()
+        .min(0)
+        .max(30)
+        .optional()
+        .describe("Seconds to wait; defaults to 30"),
+    },
+  },
+  async ({ taskId, timeoutSeconds }) => {
+    const waited = await waitForTask(
+      taskId,
+      (timeoutSeconds ?? 30) * 1_000,
+    );
+    const prefix = waited.timedOut
+      ? "Wait timed out; the task is still active.\n"
+      : "Task reached a final state.\n";
+    return {
+      content: [{ type: "text", text: `${prefix}${taskStatusText(waited.task)}` }],
+    };
+  },
+);
+
+server.registerTool(
+  "reply",
+  {
+    description:
+      "Send a follow-up to a completed task by resuming the same agent session.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      taskId: z.string().trim().min(1).describe("Completed task ID"),
+      message: z.string().trim().min(1).describe("Follow-up request"),
+    },
+  },
+  async ({ taskId, message }) => {
+    const task = replyToTask(taskId, message);
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Follow-up queued for ${task.id} in session ${task.sessionId}. Status: ${task.status}.`,
+        },
+      ],
+    };
+  },
+);
+
+server.registerTool(
+  "cancel",
+  {
+    description: "Cancel a queued or running delegated task.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      taskId: z.string().trim().min(1).describe("Active task ID"),
+    },
+  },
+  async ({ taskId }) => {
+    const task = cancelTask(taskId);
+    return {
+      content: [
+        { type: "text", text: `Cancelled ${task.id}. Status: ${task.status}.` },
       ],
     };
   },

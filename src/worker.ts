@@ -5,6 +5,7 @@ import {
   completeTask,
   failTask,
   getTask,
+  latestTaskPrompt,
   markTaskRunning,
   setTaskAgentProcess,
 } from "./core/tasks.js";
@@ -15,11 +16,13 @@ async function main(): Promise<void> {
   if (!taskId) throw new Error("The worker needs a task ID.");
 
   const task = markTaskRunning(taskId, projectRoot);
+  if (task.status !== "running") return;
   try {
     const result = await runAgent({
       agent: task.agent,
-      prompt: task.prompt,
+      prompt: latestTaskPrompt(task.id, projectRoot),
       projectRoot,
+      sessionId: task.sessionId,
       logPath: task.logPath,
       onSpawn: (processId) => setTaskAgentProcess(task.id, processId, projectRoot),
     });
@@ -32,7 +35,9 @@ async function main(): Promise<void> {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    failTask(task.id, message, projectRoot);
+    if (getTask(task.id, projectRoot).status !== "cancelled") {
+      failTask(task.id, message, projectRoot);
+    }
   }
 }
 
@@ -43,7 +48,9 @@ main().catch((error: unknown) => {
   if (taskId) {
     try {
       getTask(taskId, projectRoot);
-      failTask(taskId, message, projectRoot);
+      if (getTask(taskId, projectRoot).status !== "cancelled") {
+        failTask(taskId, message, projectRoot);
+      }
     } catch {
       // There is no task record to update, so stderr is the only fallback.
     }
