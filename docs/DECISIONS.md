@@ -52,6 +52,11 @@ Every decision made so far, and why. Add new ones at the bottom of the right tab
 | 41 | On Windows, launch production task supervisors through the local CIM process broker under the current user; pass only executable paths, task ID, project root, and adapter-config path, while keeping direct detached spawn elsewhere and in custom-environment tests | Codex tears down descendants when its headless process exits even if Node marks them detached; the Windows broker creates the supervisor outside that tree while preserving the user's PATH, profile, and subscription-login files, without putting the delegated prompt into a shell command |
 | 42 | Before `wait` returns a persisted final task state, refresh that task's human-readable Markdown file from the database; keep virtual orphan checks read-only | SQLite is the authority, but callers and people should not observe “completed” from `wait` while the readable task file still briefly says “running”; rewriting only persisted final states closes that race without turning orphan inspection into a mutation |
 | 43 | Use token-efficient orchestration by default: do simple work directly; delegate only for clear specialist, review, parallel, or user-requested value; aim for roughly 25% or less fresh-token overhead versus a direct run; report cache separately; and add automatic warnings/budgets in Phase 5 | The calculator proof showed that repeated context and tool turns can make multi-agent processing much larger than the underlying task. A quantified target plus progressive disclosure and session reuse keeps today’s workflow disciplined, while Phase 5 will provide reliable cross-vendor measurement and enforcement |
+| 44 | Run each Git-backed delegated task in a temporary external worktree on a unique `sharelane/task-*` branch; commit remaining edits, remove the checkout, and hand the branch/commit back without automatically merging | Isolation prevents physical overwrite, an automatic local commit makes cleanup recoverable, and review-before-merge is safer than silently changing the owner's branch |
+| 45 | Give claims a 15-minute default TTL, refresh task claims automatically every 30 seconds, expose explicit `heartbeat`, and release claims at task termination | Live work keeps ownership with little prompt overhead, while crashed workers stop blocking others within a bounded time |
+| 46 | Refuse conservative overlaps between claimed files/globs, and warn at 60% or greater word-set overlap between a new prompt and active tasks | Claims must favor safety when glob intersection is uncertain; prompt similarity is advisory because wording alone is not reliable enough to reject useful work |
+| 47 | Install a shareable Claude `PreToolUse` guard for `Edit|Write`, and pair it with task Git polling plus a final diff for every agent | Claude's built-in edits can be blocked before execution, while detection still covers shell writes, Codex, and agents without compatible hooks |
+| 48 | Persist collision notices in SQLite and append pending relevant notices to every successful ShareLane MCP reply | Separate stdio hub processes cannot push alerts, so the next normal tool call is the reliable delivery point |
 
 ## Proposed — need your yes/no
 
@@ -61,14 +66,14 @@ Every decision made so far, and why. Add new ones at the bottom of the right tab
 | P2 | No always-running background program: each agent starts its own copy of the hub, and the copies share one SQLite database | Nothing to start or crash; downside is the hub can only reply, not push alerts | Open |
 | P3 | Storage: SQLite for live state + markdown files for context (readable, committed to git) | Safe for several agents at once; context stays human-readable | Open |
 | P4 | Search: SQLite full-text search; no AI-based "semantic" search in v1 | Semantic search needs an API key or local model | Open |
-| P5 | Conflict protection in layers: worktrees → name-on-it claims (that expire) → duplicate-task warnings → blocking hooks where the CLI allows → watcher that flags unclaimed edits | Agents can ignore instructions, so no single layer is enough | Open |
+| P5 | Conflict protection in layers: worktrees → name-on-it claims (that expire) → duplicate-task warnings → blocking hooks where the CLI allows → watcher that flags unclaimed edits | Agents can ignore instructions, so no single layer is enough | Accepted and implemented by decisions 44–48 |
 | P6 | Delegation depth limit of 3 | Stops loops while allowing normal chains | Accepted and implemented by decision 38 |
 | P7 | Agents log progress after every step, so a handoff is always ready even after a sudden stop | Limits can hit mid-task | Open |
 | P8 | Handoff threshold around 90% of quota | Leaves room to write the handoff | Open |
 
 ## Still undecided
 
-- How a finished worker's copy (worktree) gets merged: automatically, or ask you first?
+- ~~How a finished worker's copy (worktree) gets merged: automatically, or ask you first?~~ Resolved by decision 44: preserve a reviewable task branch and never auto-merge.
 - ~~Should `.sharelane/context/` be committed to git (shared with teammates) or kept private?~~ Resolved by decision 30: commit it.
-- How long a "name-on-it" claim lasts before it expires.
+- ~~How long a "name-on-it" claim lasts before it expires.~~ Resolved by decision 45: 15 minutes by default, with heartbeat extension.
 - Which similar tools exist already (e.g. MCP Agent Mail, Zen/PAL MCP) and how ShareLane is different. Check before launch.

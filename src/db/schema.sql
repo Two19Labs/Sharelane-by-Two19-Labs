@@ -6,7 +6,7 @@ INSERT INTO schema_info (version)
 SELECT 1
 WHERE NOT EXISTS (SELECT 1 FROM schema_info);
 
-UPDATE schema_info SET version = 2;
+UPDATE schema_info SET version = 3;
 
 CREATE TABLE IF NOT EXISTS chunks (
   id TEXT PRIMARY KEY,
@@ -52,6 +52,13 @@ CREATE TABLE IF NOT EXISTS tasks (
   log_path TEXT NOT NULL,
   worker_pid INTEGER,
   agent_pid INTEGER,
+  caller_agent TEXT,
+  source_root TEXT,
+  worktree_path TEXT,
+  branch_name TEXT,
+  base_commit TEXT,
+  result_commit TEXT,
+  changed_files_json TEXT CHECK (changed_files_json IS NULL OR json_valid(changed_files_json)),
   created_at TEXT NOT NULL,
   started_at TEXT,
   finished_at TEXT,
@@ -81,3 +88,34 @@ CREATE TABLE IF NOT EXISTS task_lineage (
   agent TEXT NOT NULL,
   PRIMARY KEY (task_id, position)
 );
+
+CREATE TABLE IF NOT EXISTS claims (
+  id TEXT PRIMARY KEY,
+  owner_key TEXT NOT NULL,
+  agent TEXT NOT NULL,
+  task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+  path_pattern TEXT NOT NULL,
+  intent TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  heartbeat_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS claims_owner_expires_at
+ON claims (owner_key, expires_at);
+
+CREATE INDEX IF NOT EXISTS claims_expires_at
+ON claims (expires_at);
+
+CREATE TABLE IF NOT EXISTS notices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  recipient_agent TEXT,
+  task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  delivered_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS notices_pending
+ON notices (delivered_at, recipient_agent, task_id, created_at);

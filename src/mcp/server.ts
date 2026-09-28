@@ -9,6 +9,12 @@ import {
 import { readChunk, updateChunk } from "../core/context.js";
 import { appendNote, readNotes } from "../core/notes.js";
 import {
+  claimPaths,
+  heartbeatClaims,
+  releaseClaims,
+} from "../core/claims.js";
+import { takePendingNotices } from "../core/notices.js";
+import {
   cancelTask,
   delegateTask,
   getTask,
@@ -16,6 +22,26 @@ import {
   waitForTask,
   type ShareLaneTask,
 } from "../core/tasks.js";
+
+const workspaceRoot = process.cwd();
+const projectRoot = process.env.SHARELANE_PROJECT_ROOT || workspaceRoot;
+const currentAgent = process.env.SHARELANE_AGENT?.trim() || "unknown";
+const currentTaskId = process.env.SHARELANE_TASK_ID?.trim() || undefined;
+
+function toolReply(text: string, relatedTaskId?: string) {
+  const notices = takePendingNotices({
+    projectRoot,
+    agent: currentAgent,
+    taskId: currentTaskId,
+    relatedTaskId,
+  });
+  const noticeText = notices.length
+    ? `\n\nShareLane notices:\n${notices
+        .map((notice) => `- [${notice.kind}] ${notice.message}`)
+        .join("\n")}`
+    : "";
+  return { content: [{ type: "text" as const, text: `${text}${noticeText}` }] };
+}
 
 function taskStatusText(task: ShareLaneTask): string {
   const lines = [
@@ -26,6 +52,11 @@ function taskStatusText(task: ShareLaneTask): string {
   if (task.result) lines.push(`Result:\n${task.result}`);
   if (task.error) lines.push(`Error:\n${task.error}`);
   if (task.sessionId) lines.push(`Session: ${task.sessionId}`);
+  if (task.branchName) lines.push(`Task branch: ${task.branchName}`);
+  if (task.resultCommit) lines.push(`Result commit: ${task.resultCommit}`);
+  if (task.changedFiles.length > 0) {
+    lines.push(`Changed files: ${task.changedFiles.join(", ")}`);
+  }
   return lines.join("\n");
 }
 
@@ -48,14 +79,7 @@ server.registerTool(
       name: z.string().min(1).describe("Name to greet"),
     },
   },
-  async ({ name }) => ({
-    content: [
-      {
-        type: "text",
-        text: `pong from ShareLane, hello ${name}`,
-      },
-    ],
-  }),
+  async ({ name }) => toolReply(`pong from ShareLane, hello ${name}`),
 );
 
 server.registerTool(
@@ -69,14 +93,7 @@ server.registerTool(
       openWorldHint: false,
     },
   },
-  async () => ({
-    content: [
-      {
-        type: "text",
-        text: process.env.SHARELANE_AGENT?.trim() || "unknown",
-      },
-    ],
-  }),
+  async () => toolReply(currentAgent),
 );
 
 server.registerTool(
@@ -94,16 +111,8 @@ server.registerTool(
     },
   },
   async ({ text }) => {
-    await appendNote(text);
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Saved note: ${text}`,
-        },
-      ],
-    };
+    await appendNote(text, projectRoot);
+    return toolReply(`Saved note: ${text}`);
   },
 );
 
@@ -118,14 +127,7 @@ server.registerTool(
       openWorldHint: false,
     },
   },
-  async () => ({
-    content: [
-      {
-        type: "text",
-        text: await readNotes(),
-      },
-    ],
-  }),
+  async () => toolReply(await readNotes(projectRoot)),
 );
 
 server.registerTool(
@@ -140,9 +142,7 @@ server.registerTool(
       openWorldHint: false,
     },
   },
-  async () => ({
-    content: [{ type: "text", text: contextMap() }],
-  }),
+  async () => toolReply(contextMap(workspaceRoot)),
 );
 
 server.registerTool(
@@ -163,9 +163,7 @@ server.registerTool(
         .describe("Chunk id, such as architecture or api"),
     },
   },
-  async ({ id }) => ({
-    content: [{ type: "text", text: readChunk(id) }],
-  }),
+  async ({ id }) => toolReply(readChunk(id, workspaceRoot)),
 );
 
 server.registerTool(
@@ -199,15 +197,13 @@ server.registerTool(
     },
   },
   async ({ id, content, title, readWhen, coversFiles }) => {
-    const chunk = updateChunk({ id, content, title, readWhen, coversFiles });
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Updated context chunk "${chunk.title}" (${chunk.id}). MAP.md and search index regenerated.`,
-        },
-      ],
-    };
+    const chunk = updateChunk(
+      { id, content, title, readWhen, coversFiles },
+      workspaceRoot,
+    );
+    return toolReply(
+      `Updated context chunk "${chunk.title}" (${chunk.id}). MAP.md and search index regenerated.`,
+    );
   },
 );
 
@@ -228,7 +224,7 @@ server.registerTool(
     },
   },
   async ({ query, limit }) => {
-    const results = searchMemory(query, limit);
+    const results = searchMemory(query, limit, projectRoot);
     const text =
       results.length === 0
         ? `No shared context matched "${query}".`
@@ -238,7 +234,89 @@ server.registerTool(
                 `${index + 1}. [${result.kind}:${result.reference}] ${result.title}\n${result.snippet}`,
             )
             .join("\n\n");
-    return { content: [{ type: "text", text }] };
+    return toolReply(text);
+  },
+);
+
+server.registerTool(
+  "claim",
+  {
+    description:
+      "Claim project-relative files or narrow path patterns before editing. Overlapping active claims are refused.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      paths: z.array(z.string().trim().min(1)).min(1).max(50),
+      intent: z.string().trim().min(1).describe("Short description of the planned edits"),
+      ttlSeconds: z.number().int().min(30).max(86_400).optional(),
+    },
+  },
+  async ({ paths, intent, ttlSeconds }) => {
+    const claims = claimPaths({
+      agent: currentAgent,
+      taskId: currentTaskId,
+      paths,
+      intent,
+      ttlSeconds,
+      projectRoot,
+    });
+    return toolReply(
+      `Claimed ${claims.map((claim) => claim.path).join(", ")} until ${claims[0]?.expiresAt}.`,
+    );
+  },
+);
+
+server.registerTool(
+  "heartbeat",
+  {
+    description: "Extend this agent or task's active claims.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      ttlSeconds: z.number().int().min(30).max(86_400).optional(),
+    },
+  },
+  async ({ ttlSeconds }) => {
+    const count = heartbeatClaims({
+      agent: currentAgent,
+      taskId: currentTaskId,
+      ttlSeconds,
+      projectRoot,
+    });
+    return toolReply(`Refreshed ${count} active claim${count === 1 ? "" : "s"}.`);
+  },
+);
+
+server.registerTool(
+  "release",
+  {
+    description: "Release some or all claims held by this agent or delegated task.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      paths: z.array(z.string().trim().min(1)).max(50).optional(),
+    },
+  },
+  async ({ paths }) => {
+    const count = releaseClaims({
+      agent: currentAgent,
+      taskId: currentTaskId,
+      paths,
+      projectRoot,
+    });
+    return toolReply(`Released ${count} claim${count === 1 ? "" : "s"}.`);
   },
 );
 
@@ -259,15 +337,20 @@ server.registerTool(
     },
   },
   async ({ agent, task }) => {
-    const delegated = delegateTask({ agent, prompt: task });
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Delegated to ${agent}. Task ID: ${delegated.id}. Status: ${delegated.status}.`,
-        },
-      ],
-    };
+    const delegated = delegateTask({
+      agent,
+      prompt: task,
+      projectRoot,
+      sourceRoot: workspaceRoot,
+      callerAgent: currentAgent,
+    });
+    const warnings = delegated.duplicateWarnings?.length
+      ? ` Warnings: ${delegated.duplicateWarnings.join(" ")}`
+      : "";
+    return toolReply(
+      `Delegated to ${agent}. Task ID: ${delegated.id}. Status: ${delegated.status}.${warnings}`,
+      delegated.id,
+    );
   },
 );
 
@@ -285,9 +368,8 @@ server.registerTool(
       taskId: z.string().trim().min(1).describe("Task ID returned by delegate"),
     },
   },
-  async ({ taskId }) => ({
-    content: [{ type: "text", text: taskStatusText(getTask(taskId)) }],
-  }),
+  async ({ taskId }) =>
+    toolReply(taskStatusText(getTask(taskId, projectRoot)), taskId),
 );
 
 server.registerTool(
@@ -316,13 +398,12 @@ server.registerTool(
     const waited = await waitForTask(
       taskId,
       (timeoutSeconds ?? 30) * 1_000,
+      projectRoot,
     );
     const prefix = waited.timedOut
       ? "Wait timed out; the task is still active.\n"
       : "Task reached a final state.\n";
-    return {
-      content: [{ type: "text", text: `${prefix}${taskStatusText(waited.task)}` }],
-    };
+    return toolReply(`${prefix}${taskStatusText(waited.task)}`, taskId);
   },
 );
 
@@ -343,15 +424,11 @@ server.registerTool(
     },
   },
   async ({ taskId, message }) => {
-    const task = replyToTask(taskId, message);
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Follow-up queued for ${task.id} in session ${task.sessionId}. Status: ${task.status}.`,
-        },
-      ],
-    };
+    const task = replyToTask(taskId, message, { projectRoot });
+    return toolReply(
+      `Follow-up queued for ${task.id} in session ${task.sessionId}. Status: ${task.status}.`,
+      taskId,
+    );
   },
 );
 
@@ -370,12 +447,8 @@ server.registerTool(
     },
   },
   async ({ taskId }) => {
-    const task = cancelTask(taskId);
-    return {
-      content: [
-        { type: "text", text: `Cancelled ${task.id}. Status: ${task.status}.` },
-      ],
-    };
+    const task = cancelTask(taskId, projectRoot);
+    return toolReply(`Cancelled ${task.id}. Status: ${task.status}.`, taskId);
   },
 );
 
@@ -396,15 +469,10 @@ server.registerTool(
     },
   },
   async ({ task, note }) => {
-    const entry = logProgress(task, note);
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Logged progress for "${entry.task}" as ${entry.agent} at ${entry.createdAt}.`,
-        },
-      ],
-    };
+    const entry = logProgress(task, note, currentAgent, projectRoot);
+    return toolReply(
+      `Logged progress for "${entry.task}" as ${entry.agent} at ${entry.createdAt}.`,
+    );
   },
 );
 

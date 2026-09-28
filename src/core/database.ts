@@ -18,6 +18,29 @@ export interface ShareLanePaths {
   tasksDir: string;
 }
 
+const taskColumns: Record<string, string> = {
+  caller_agent: "TEXT",
+  source_root: "TEXT",
+  worktree_path: "TEXT",
+  branch_name: "TEXT",
+  base_commit: "TEXT",
+  result_commit: "TEXT",
+  changed_files_json: "TEXT CHECK (changed_files_json IS NULL OR json_valid(changed_files_json))",
+};
+
+function migrateExistingDatabase(database: DatabaseSync): void {
+  const columns = database.prepare("PRAGMA table_info(tasks)").all() as unknown as Array<{
+    name: string;
+  }>;
+  const existing = new Set(columns.map((column) => column.name));
+  for (const [name, definition] of Object.entries(taskColumns)) {
+    if (!existing.has(name)) {
+      database.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${definition}`);
+    }
+  }
+  database.exec("UPDATE schema_info SET version = 3;");
+}
+
 export function getShareLanePaths(projectRoot = process.cwd()): ShareLanePaths {
   const shareLaneDir = join(projectRoot, ".sharelane");
   const contextDir = join(shareLaneDir, "context");
@@ -46,6 +69,7 @@ export function openDatabase(projectRoot = process.cwd()): DatabaseSync {
     database.exec("PRAGMA synchronous = NORMAL;");
     database.exec("PRAGMA foreign_keys = ON;");
     database.exec(schema);
+    migrateExistingDatabase(database);
     return database;
   } catch (error: unknown) {
     database.close();

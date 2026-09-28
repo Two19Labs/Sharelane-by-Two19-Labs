@@ -1,9 +1,22 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+
 const [format, prompt, resumedSession] = process.argv.slice(2);
 const sessionId = resumedSession || "fake-session-123";
 
 const delay = Number(process.env.FAKE_AGENT_DELAY_MS || 0);
 if (delay > 0) {
   await new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+if (process.env.FAKE_EDIT_PATH) {
+  const editPath = resolve(process.cwd(), process.env.FAKE_EDIT_PATH);
+  await mkdir(dirname(editPath), { recursive: true });
+  await writeFile(
+    editPath,
+    process.env.FAKE_EDIT_CONTENT || "edited by fake agent\n",
+    "utf8",
+  );
 }
 
 const environmentReport = process.env.FAKE_REPORT_SHARELANE_ENV

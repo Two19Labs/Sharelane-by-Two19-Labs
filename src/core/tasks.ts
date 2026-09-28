@@ -5,7 +5,15 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentAdapter, loadAgentRegistry } from "../adapters/adapter.js";
 import type { AgentUsage } from "../adapters/result.js";
+import { findSimilarActiveTasks } from "./collisions.js";
+import { releaseClaims } from "./claims.js";
 import { getShareLanePaths, openDatabase } from "./database.js";
+import { createNotice } from "./notices.js";
+import {
+  createTaskWorkspace,
+  finalizeTaskWorkspace,
+  type FinalizedWorkspace,
+} from "./worktrees.js";
 
 export type TaskStatus =
   | "queued"
@@ -36,6 +44,14 @@ export interface ShareLaneTask {
   logPath: string;
   workerPid?: number;
   agentPid?: number;
+  callerAgent?: string;
+  sourceRoot?: string;
+  worktreePath?: string;
+  branchName?: string;
+  baseCommit?: string;
+  resultCommit?: string;
+  changedFiles: string[];
+  duplicateWarnings?: string[];
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
@@ -57,6 +73,13 @@ interface TaskRow {
   log_path: string;
   worker_pid: number | null;
   agent_pid: number | null;
+  caller_agent: string | null;
+  source_root: string | null;
+  worktree_path: string | null;
+  branch_name: string | null;
+  base_commit: string | null;
+  result_commit: string | null;
+  changed_files_json: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -76,6 +99,7 @@ export interface DelegateTaskInput {
   parentId?: string;
   depth?: number;
   callerAgent?: string;
+  sourceRoot?: string;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -123,6 +147,15 @@ function fromRow(row: TaskRow): ShareLaneTask {
     logPath: row.log_path,
     workerPid: row.worker_pid ?? undefined,
     agentPid: row.agent_pid ?? undefined,
+    callerAgent: row.caller_agent ?? undefined,
+    sourceRoot: row.source_root ?? undefined,
+    worktreePath: row.worktree_path ?? undefined,
+    branchName: row.branch_name ?? undefined,
+    baseCommit: row.base_commit ?? undefined,
+    resultCommit: row.result_commit ?? undefined,
+    changedFiles: row.changed_files_json
+      ? (JSON.parse(row.changed_files_json) as string[])
+      : [],
     createdAt: row.created_at,
     startedAt: row.started_at ?? undefined,
     finishedAt: row.finished_at ?? undefined,
@@ -183,6 +216,13 @@ function taskMarkdown(task: ShareLaneTask, projectRoot: string): string {
   if (task.sessionId) lines.push(`- Session: ${task.sessionId}`);
   if (task.startedAt) lines.push(`- Started: ${task.startedAt}`);
   if (task.finishedAt) lines.push(`- Finished: ${task.finishedAt}`);
+  if (task.branchName) lines.push(`- Task branch: ${task.branchName}`);
+  if (task.baseCommit) lines.push(`- Started from: ${task.baseCommit}`);
+  if (task.resultCommit) lines.push(`- Result commit: ${task.resultCommit}`);
+  if (task.worktreePath) lines.push(`- Temporary worktree: ${task.worktreePath}`);
+  if (task.changedFiles.length > 0) {
+    lines.push(`- Changed files: ${task.changedFiles.join(", ")}`);
+  }
   const lineage = getTaskLineage(task.id, projectRoot);
   if (lineage.length > 0) lines.push(`- Agent path: ${lineage.join(" -> ")}`);
 
@@ -261,6 +301,12 @@ function updateTask(
     "usage_json",
     "worker_pid",
     "agent_pid",
+    "source_root",
+    "worktree_path",
+    "branch_name",
+    "base_commit",
+    "result_commit",
+    "changed_files_json",
     "started_at",
     "finished_at",
     "updated_at",
@@ -319,6 +365,7 @@ function launchTaskWorker(
       ...process.env,
       ...env,
       SHARELANE_PROJECT_ROOT: projectRoot,
+      SHARELANE_WORKSPACE_ROOT: task.worktreePath ?? projectRoot,
       SHARELANE_TASK_ID: task.id,
       SHARELANE_AGENT: task.agent,
       SHARELANE_PARENT: task.parentId ?? "",
@@ -449,7 +496,7 @@ export function setTaskAgentProcess(
     taskId,
     { agent_pid: processId, updated_at: new Date().toISOString() },
     projectRoot,
-    ["running"],
+    ["running", "failed", "cancelled"],
   );
 }
 
@@ -518,6 +565,23 @@ export function failTask(
   ).task;
 }
 
+export function recordTaskWorkspaceResult(
+  taskId: string,
+  result: FinalizedWorkspace,
+  projectRoot: string,
+): ShareLaneTask {
+  return updateTask(
+    taskId,
+    {
+      result_commit: result.resultCommit ?? null,
+      changed_files_json: JSON.stringify(result.changedFiles),
+      updated_at: new Date().toISOString(),
+    },
+    projectRoot,
+    ["running"],
+  ).task;
+}
+
 export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
   const projectRoot = input.projectRoot ?? process.cwd();
   const inheritedEnvironment = { ...process.env, ...input.env };
@@ -551,6 +615,13 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
   lineage = [...lineage, input.agent];
 
   const id = `task-${randomUUID()}`;
+  const duplicateWarnings = findSimilarActiveTasks(input.prompt, projectRoot).map(
+    (similar) =>
+      `Possible duplicate of ${similar.id} (${similar.agent}, ${Math.round(similar.similarity * 100)}% prompt overlap).`,
+  );
+  const sourceRoot =
+    input.sourceRoot || inheritedEnvironment.SHARELANE_WORKSPACE_ROOT || projectRoot;
+  const workspace = createTaskWorkspace({ projectRoot, sourceRoot, taskId: id });
   const now = new Date().toISOString();
   const paths = getShareLanePaths(projectRoot);
   const taskFile = join(paths.tasksDir, `${id}.md`);
@@ -562,6 +633,13 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
     status: "queued",
     parentId,
     depth,
+    callerAgent,
+    sourceRoot: workspace.sourceRoot,
+    worktreePath: workspace.worktreePath,
+    branchName: workspace.branchName,
+    baseCommit: workspace.baseCommit,
+    changedFiles: [],
+    duplicateWarnings,
     taskFile,
     logPath,
     createdAt: now,
@@ -576,8 +654,9 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
       .prepare(
         `INSERT INTO tasks (
           id, agent, prompt, status, parent_id, depth, task_file, log_path,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          caller_agent, source_root, worktree_path, branch_name, base_commit,
+          changed_files_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         task.id,
@@ -588,6 +667,12 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
         task.depth,
         task.taskFile,
         task.logPath,
+        task.callerAgent ?? null,
+        task.sourceRoot ?? null,
+        task.worktreePath ?? null,
+        task.branchName ?? null,
+        task.baseCommit ?? null,
+        JSON.stringify(task.changedFiles),
         task.createdAt,
         task.updatedAt,
       );
@@ -609,16 +694,52 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
     } catch {
       // Preserve the original database error.
     }
+    try {
+      finalizeTaskWorkspace({
+        projectRoot,
+        taskId: task.id,
+        worktreePath: task.worktreePath,
+        baseCommit: task.baseCommit,
+      });
+    } catch {
+      // Preserve the database error; the registered worktree remains recoverable.
+    }
     throw error;
   } finally {
     database.close();
   }
+  for (const warning of duplicateWarnings) {
+    createNotice({
+      projectRoot,
+      recipientAgent: callerAgent,
+      taskId: task.id,
+      kind: "duplicate_task",
+      message: warning,
+    });
+  }
   writeTaskFile(task, projectRoot);
   try {
-    return launchTaskWorker(task, projectRoot, input.env);
+    return {
+      ...launchTaskWorker(task, projectRoot, input.env),
+      duplicateWarnings,
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     failTask(task.id, `Could not launch task supervisor: ${message}`, projectRoot);
+    try {
+      recordTaskWorkspaceResult(
+        task.id,
+        finalizeTaskWorkspace({
+          projectRoot,
+          taskId: task.id,
+          worktreePath: task.worktreePath,
+          baseCommit: task.baseCommit,
+        }),
+        projectRoot,
+      );
+    } catch {
+      // The task file retains the worktree path for manual recovery.
+    }
     throw error;
   }
 }
@@ -636,6 +757,13 @@ export function replyToTask(
     );
   }
 
+  const workspace = createTaskWorkspace({
+    projectRoot,
+    sourceRoot: task.sourceRoot ?? projectRoot,
+    taskId,
+    existingBranch: task.branchName,
+  });
+
   const now = new Date().toISOString();
   const database = openDatabase(projectRoot);
   try {
@@ -643,10 +771,19 @@ export function replyToTask(
     const updated = database
       .prepare(
         `UPDATE tasks SET status = 'queued', result = NULL, error = NULL,
-          worker_pid = NULL, agent_pid = NULL, finished_at = NULL, updated_at = ?
+          worker_pid = NULL, agent_pid = NULL, finished_at = NULL,
+          source_root = ?, worktree_path = ?, branch_name = ?, base_commit = ?,
+          updated_at = ?
          WHERE id = ? AND status = 'completed'`,
       )
-      .run(now, taskId);
+      .run(
+        workspace.sourceRoot,
+        workspace.worktreePath ?? null,
+        workspace.branchName ?? null,
+        workspace.baseCommit ?? null,
+        now,
+        taskId,
+      );
     if (updated.changes === 0) {
       throw new Error(`Task "${taskId}" changed before the reply could be queued.`);
     }
@@ -662,6 +799,16 @@ export function replyToTask(
     } catch {
       // Preserve the original database error.
     }
+    try {
+      finalizeTaskWorkspace({
+        projectRoot,
+        taskId,
+        worktreePath: workspace.worktreePath,
+        baseCommit: workspace.baseCommit,
+      });
+    } catch {
+      // Preserve the reply error; the registered worktree remains recoverable.
+    }
     throw error;
   } finally {
     database.close();
@@ -673,6 +820,20 @@ export function replyToTask(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     failTask(task.id, `Could not launch task supervisor: ${message}`, projectRoot);
+    try {
+      recordTaskWorkspaceResult(
+        task.id,
+        finalizeTaskWorkspace({
+          projectRoot,
+          taskId: task.id,
+          worktreePath: workspace.worktreePath,
+          baseCommit: workspace.baseCommit,
+        }),
+        projectRoot,
+      );
+    } catch {
+      // The task file retains the worktree path for manual recovery.
+    }
     throw error;
   }
 }
@@ -734,7 +895,32 @@ export function cancelTask(
   }
   stopProcess(before.agentPid);
   stopProcess(before.workerPid);
-  return cancelled.task;
+  releaseClaims({ agent: before.agent, taskId, projectRoot });
+  try {
+    const finalized = finalizeTaskWorkspace({
+      projectRoot,
+      taskId,
+      worktreePath: before.worktreePath,
+      baseCommit: before.baseCommit,
+    });
+    recordTaskWorkspaceResult(
+      taskId,
+      finalized,
+      projectRoot,
+    );
+    if (!finalized.cleanedUp && before.worktreePath) {
+      throw new Error(`could not remove ${before.worktreePath}`);
+    }
+  } catch (error) {
+    createNotice({
+      projectRoot,
+      recipientAgent: before.callerAgent,
+      taskId,
+      kind: "worktree_cleanup_failed",
+      message: `Cancelled task ${taskId}, but its worktree was left for recovery: ${error instanceof Error ? error.message : String(error)}.`,
+    });
+  }
+  return getTask(taskId, projectRoot);
 }
 
 export function latestTaskPrompt(

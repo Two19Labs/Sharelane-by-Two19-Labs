@@ -1,6 +1,6 @@
 # ShareLane — Design
 
-> Status: **draft; Phases 0–2 implemented**. This file is the source of truth for what we're building and why; update it when a decision changes.
+> Status: **draft; Phases 0–3 implemented**. This file is the source of truth for what we're building and why; update it when a decision changes.
 
 ## 1. What ShareLane is
 
@@ -183,11 +183,11 @@ Each agent launches its own copy of the hub over stdio. The copies coordinate th
 
 Layered, because MCP tools are voluntary and an agent can ignore instructions:
 
-1. **Worktrees (default for workers).** Each delegated worker runs in its own git worktree on its own branch, so workers can't overwrite each other's files. The orchestrator merges when the task is done.
-2. **Claims.** `claim(paths, intent)` before editing; the hub refuses overlapping claims and says who holds them and why. Claims expire (TTL + heartbeat) so a crashed agent doesn't hold files forever. With worktrees, claims mainly prevent two agents *doing the same work* and surface merge conflicts early.
-3. **Duplicate-task detection.** New tasks are compared against active ones (same files, similar goal) and flagged before starting.
-4. **Hooks** where the CLI supports them (e.g. Claude Code's PreToolUse hook) block edits to files the agent hasn't claimed.
-5. **Detection.** A file watcher / git diff flags edits nobody claimed; they show on the dashboard and as notices.
+1. **Worktrees (default for workers).** Each delegated worker runs in a temporary Git worktree on a unique `sharelane/task-*` branch. ShareLane commits remaining changes, removes the temporary checkout, and hands the branch and commit back for review. It does not silently merge into the owner's branch.
+2. **Claims.** `claim(paths, intent)` before editing; the hub refuses overlapping file/glob claims and says who holds them and why. Claims expire after 15 minutes by default, explicit `heartbeat` extends them, task supervisors refresh them every 30 seconds, and terminal tasks release them.
+3. **Duplicate-task detection.** New prompts are compared with queued/running prompts. At 60% or greater word-set overlap, the caller receives a warning while worktree isolation and claims remain the enforcement layers.
+4. **Hooks.** `sharelane init` installs a project Claude Code `PreToolUse` hook for `Edit|Write`. It checks the central claim database and blocks an unclaimed built-in edit before execution.
+5. **Detection and notices.** A task watcher plus final Git diff flags changed paths that the task did not claim. Pending duplicate, edit, and cleanup notices are appended to every successful MCP tool reply. This covers Codex, shell edits, and other paths a Claude hook cannot block.
 
 ### 6.4 Delegation (R1, R4, R6)
 
@@ -249,10 +249,7 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 ## 9. Open questions
 
 1. How exactly does each CLI expose plan quota? Pull from Manthan's other project.
-2. Merge strategy when a worker's worktree is done: orchestrator merges automatically, or asks you?
-3. Should `.sharelane/context/` be committed to git (shared with teammates) or ignored?
-4. Default delegation depth and claim TTL values.
-5. Prior art to check before launch (e.g. MCP Agent Mail, Zen/PAL MCP): what they already do, and how ShareLane differs.
+2. Prior art to check before launch (e.g. MCP Agent Mail, Zen/PAL MCP): what they already do, and how ShareLane differs.
 
 ## 10. Decisions
 

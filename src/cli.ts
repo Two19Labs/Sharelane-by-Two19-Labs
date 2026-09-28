@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 
 import { initializeContext, relativeContextPath } from "./core/context.js";
-import { installAgentInstructions } from "./core/instructions.js";
+import {
+  installAgentInstructions,
+  installRuntimeIgnores,
+} from "./core/instructions.js";
+import { installClaudeClaimHook } from "./core/hooks.js";
 import { runAgent } from "./core/runner.js";
 
 function usage(): string {
@@ -42,6 +46,8 @@ async function run(): Promise<void> {
   const projectRoot = process.cwd();
   const result = initializeContext(projectRoot);
   installAgentInstructions(projectRoot);
+  installRuntimeIgnores(projectRoot);
+  installClaudeClaimHook(projectRoot);
   // Rebuild once more in case an existing chunk covers an instruction file.
   initializeContext(projectRoot);
 
@@ -53,7 +59,8 @@ async function run(): Promise<void> {
       ? `Created chunks: ${result.createdChunks.join(", ")}`
       : "Starter chunks already existed; none were overwritten.",
   );
-  console.log("Updated agent instructions: AGENTS.md, CLAUDE.md");
+  console.log("Updated agent instructions and local-runtime Git ignores.");
+  console.log("Installed Claude edit guard: .claude/settings.json");
 }
 
 try {

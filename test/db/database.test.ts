@@ -60,6 +60,21 @@ test("built-in SQLite has FTS5 and creates the Phase 1 schema", async () => {
         .journal_mode,
       "wal",
     );
+    assert.equal(
+      (database.prepare("SELECT version FROM schema_info").get() as {
+        version: number;
+      }).version,
+      3,
+    );
+    assert.deepEqual(
+      database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('claims', 'notices') ORDER BY name",
+        )
+        .all()
+        .map((row) => row.name),
+      ["claims", "notices"],
+    );
 
     database
       .prepare(

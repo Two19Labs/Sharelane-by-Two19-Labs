@@ -9,6 +9,7 @@ import {
   getDefaultEnvironment,
   StdioClientTransport,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { createNotice } from "../../src/core/notices.js";
 
 const serverPath = fileURLToPath(
   new URL("../../src/mcp/server.ts", import.meta.url),
@@ -60,7 +61,7 @@ after(async () => {
   await rm(projectRoot, { recursive: true, force: true });
 });
 
-test("lists context tools and Phase 2 task controls", async () => {
+test("lists context tools and Phase 3 collision controls", async () => {
   const result = await client.listTools();
   assert.deepEqual(
     result.tools.map((tool) => tool.name),
@@ -73,6 +74,9 @@ test("lists context tools and Phase 2 task controls", async () => {
       "read_chunk",
       "update_chunk",
       "search",
+      "claim",
+      "heartbeat",
+      "release",
       "delegate",
       "status",
       "wait",
@@ -94,6 +98,9 @@ test("lists context tools and Phase 2 task controls", async () => {
   assert.equal(tools.get("wait")?.annotations?.readOnlyHint, true);
   assert.equal(tools.get("reply")?.annotations?.destructiveHint, true);
   assert.equal(tools.get("cancel")?.annotations?.destructiveHint, true);
+  assert.equal(tools.get("claim")?.annotations?.destructiveHint, false);
+  assert.equal(tools.get("heartbeat")?.annotations?.idempotentHint, true);
+  assert.equal(tools.get("release")?.annotations?.idempotentHint, true);
 });
 
 test("ping and whoami return the expected values", async () => {
@@ -182,4 +189,37 @@ test("update_chunk returns the compaction message through MCP at the size cap", 
 
   assert.equal(result.isError, true);
   assert.match(firstText(result), /compact this first/i);
+});
+
+test("claim tools work through MCP and pending notices ride on the next reply", async () => {
+  const claimed = await client.callTool({
+    name: "claim",
+    arguments: { paths: ["src/mcp/server.ts"], intent: "exercise claims" },
+  });
+  assert.match(firstText(claimed), /Claimed src\/mcp\/server\.ts/);
+
+  const heartbeat = await client.callTool({
+    name: "heartbeat",
+    arguments: {},
+  });
+  assert.match(firstText(heartbeat), /Refreshed 1 active claim/);
+
+  createNotice({
+    projectRoot,
+    recipientAgent: "test-agent",
+    kind: "test_notice",
+    message: "A collision warning is waiting.",
+  });
+  const ping = await client.callTool({
+    name: "ping",
+    arguments: { name: "notice-check" },
+  });
+  assert.match(firstText(ping), /ShareLane notices:/);
+  assert.match(firstText(ping), /A collision warning is waiting/);
+
+  const released = await client.callTool({
+    name: "release",
+    arguments: {},
+  });
+  assert.match(firstText(released), /Released 1 claim/);
 });

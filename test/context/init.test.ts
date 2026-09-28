@@ -72,6 +72,22 @@ test("sharelane init creates the context layout without overwriting it", async (
     assert.match(claude, /\.sharelane\/context\/MAP\.md/);
     assert.match(agents, /Keep token overhead low/);
     assert.match(claude, /Keep token overhead low/);
+    assert.match(
+      await readFile(join(projectRoot, ".gitignore"), "utf8"),
+      /\.sharelane\/sharelane\.db/,
+    );
+    assert.match(agents, /claim the exact files/i);
+    assert.match(
+      await readFile(join(projectRoot, ".claude", "settings.json"), "utf8"),
+      /sharelane-claim-guard\.mjs/,
+    );
+    assert.match(
+      await readFile(
+        join(projectRoot, ".claude", "hooks", "sharelane-claim-guard.mjs"),
+        "utf8",
+      ),
+      /blocked an unclaimed edit/,
+    );
 
     const architecturePath = join(
       projectRoot,
@@ -86,6 +102,12 @@ test("sharelane init creates the context layout without overwriting it", async (
     assert.equal(
       (await readFile(join(projectRoot, "AGENTS.md"), "utf8")).match(
         /<!-- sharelane-context:start -->/g,
+      )?.length,
+      1,
+    );
+    assert.equal(
+      (await readFile(join(projectRoot, ".gitignore"), "utf8")).match(
+        /^\.sharelane\/sharelane\.db$/gm,
       )?.length,
       1,
     );
