@@ -27,13 +27,9 @@ async function waitUntilFinished(
   taskId: string,
   projectRoot: string,
 ): Promise<ReturnType<typeof getTask>> {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const task = getTask(taskId, projectRoot);
-    if (["completed", "failed", "cancelled"].includes(task.status)) return task;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error("Timed out waiting for detached task.");
+  const waited = await waitForTask(taskId, 10_000, projectRoot);
+  if (waited.timedOut) throw new Error("Timed out waiting for detached task.");
+  return waited.task;
 }
 
 test("delegation returns a task ID while a detached worker continues", async () => {

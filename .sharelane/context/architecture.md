@@ -2,14 +2,14 @@
 title: Architecture
 read-when: Understanding ShareLane components and data flow.
 covers-files: ["src/**"]
-updated-at: 2026-09-27T03:21:21.625Z
-source-hash: 7df7e0b8c1147d52af58878440039bfd23e233447ceb4ae85f82162e78f8b895
+updated-at: 2026-09-28T13:56:57.411Z
+source-hash: 09f6ec50cd8231b0f55f6f344563d1950bed0a33bd26395e8ec3ebfc5c90c52e
 ---
 
 # Architecture
 
-ShareLane is a local MCP hub for shared agent context. Each agent starts its own stdio MCP server in the project directory. The server delegates behavior to reusable core modules.
+ShareLane is a local MCP hub with two connected flows. Context requests go from the MCP server or CLI into the context core, which maintains small Markdown chunks, a generated map, SQLite records, FTS5 search, and a progress journal. Delegation requests go from MCP task tools into the task core, runner, and configuration-driven agent adapters.
 
-Phase 1 flow: MCP or CLI request → context core → human-readable Markdown chunks plus one local SQLite database. MAP.md is generated from chunk headers; FTS5 indexes chunks and journal notes. WAL mode and a busy timeout let separate server processes safely share the database.
+A delegated task is persisted before a detached supervisor starts. The supervisor builds a context-rich first prompt, starts the selected CLI without a shell, normalizes its JSON output, stores the conversation and session ID, and writes a human-readable task file. Replies resume that saved CLI session. Status, wait, cancel, lineage limits, cycle rejection, orphan detection, and Windows process brokering make the lifecycle observable and safe.
 
-Claude verified this shared chunk through MCP.
+Each agent still starts its own stdio MCP server in the project directory. SQLite WAL mode and a busy timeout let those processes share local state safely. Phase 2 is complete; requirement evidence is in docs/PHASE_2_AUDIT.md.

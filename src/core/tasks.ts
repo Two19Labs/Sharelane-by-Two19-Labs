@@ -685,7 +685,12 @@ export async function waitForTask(
   const deadline = Date.now() + Math.max(0, timeoutMilliseconds);
   while (true) {
     const task = getTask(taskId, projectRoot);
-    if (terminalStatuses.has(task.status)) return { task, timedOut: false };
+    if (terminalStatuses.has(task.status)) {
+      if (persistedTerminalStatuses.has(task.status)) {
+        writeTaskFile(task, projectRoot);
+      }
+      return { task, timedOut: false };
+    }
     if (Date.now() >= deadline) return { task, timedOut: true };
     await new Promise((resolve) => setTimeout(resolve, 100));
   }

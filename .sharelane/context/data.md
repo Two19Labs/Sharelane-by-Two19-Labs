@@ -2,12 +2,14 @@
 title: Data and storage
 read-when: Changing stored data, schemas, search, migrations, or persistence.
 covers-files: ["src/db/**","src/core/database.ts","src/core/context.ts","src/core/memory.ts"]
-updated-at: 2026-09-26T20:50:49.184Z
-source-hash: 483e116ec3ca488f7087280e3b263c3ad5e55341371b01ad720b01659663de1f
+updated-at: 2026-09-28T13:56:59.233Z
+source-hash: bfef655d6c250d08a2af8a6727709326521f26d4efd66dd3474cafc5327a9026
 ---
 
 # Data and storage
 
-Curated context lives in committed Markdown files under .sharelane/context. MAP.md is generated; the other files are editable topic chunks with title, read-when, covers-files, updated-at, and optional source-hash headers.
+Curated context lives in committed Markdown files under .sharelane/context. MAP.md is generated; topic chunks have title, read-when, covers-files, updated-at, and source-hash headers. FTS5 indexes chunks and progress notes for word search.
 
-Local runtime state lives in .sharelane/sharelane.db using SQLite WAL mode. The chunks and journal tables hold structured records, and the FTS5 search_index table provides word search. The database, WAL files, raw journal, and legacy notes are ignored by Git because they can be rebuilt or are noisy runtime data.
+Local runtime state lives in .sharelane/sharelane.db using SQLite WAL mode. Phase 2 adds tasks for lifecycle state, task_messages for the complete conversation, and task_lineage for loop-safe agent paths. Human-readable task snapshots live under .sharelane/tasks and raw agent output under .sharelane/runs.
+
+The database, WAL files, raw journal, task snapshots, run logs, and legacy notes are ignored by Git. They contain local runtime history or rebuildable indexes; curated context and audit documents are committed.
