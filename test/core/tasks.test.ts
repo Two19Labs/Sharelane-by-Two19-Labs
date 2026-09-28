@@ -74,6 +74,8 @@ test("delegation returns a task ID while a detached worker continues", async () 
     const finished = await waitUntilFinished(delegated.id, projectRoot);
     assert.equal(finished.status, "completed", finished.error ?? "task failed");
     assert.match(finished.result ?? "", /You are a ShareLane delegated worker/);
+    assert.match(finished.result ?? "", /Minimize token overhead/);
+    assert.match(finished.result ?? "", /delegate again only when another agent adds clear/);
     assert.match(finished.result ?? "", /Request:\ndo the slow work/);
     assert.match(finished.result ?? "", /Project context map:\n# ShareLane context map/);
     assert.match(

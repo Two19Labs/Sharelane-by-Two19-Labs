@@ -70,6 +70,8 @@ test("sharelane init creates the context layout without overwriting it", async (
     assert.match(agents, /Keep me\./);
     assert.match(agents, /\.sharelane\/context\/MAP\.md/);
     assert.match(claude, /\.sharelane\/context\/MAP\.md/);
+    assert.match(agents, /Keep token overhead low/);
+    assert.match(claude, /Keep token overhead low/);
 
     const architecturePath = join(
       projectRoot,

@@ -109,7 +109,7 @@ Because every agent gets both, the setup is symmetric: whichever agent you're ch
 
 ## 5. Shared context: map + chunks
 
-Goal: every agent knows *where* to look without reading everything. Context is loaded in layers (progressive disclosure), so a typical task costs a few thousand tokens, not hundreds of thousands.
+Goal: every agent knows *where* to look without reading everything. Context is loaded in layers (progressive disclosure). Agents start with the map, then open only relevant chunks or document sections; cached and fresh tokens are measured separately so a large cache count cannot hide avoidable context loading.
 
 ```text
 .sharelane/
@@ -195,6 +195,7 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 - `status(task_id)`, `wait(task_id, timeout)`, `reply(task_id, message)` (resumes the worker's session), `cancel(task_id)`.
 - Every worker gets `SHARELANE_TASK_ID`, `SHARELANE_PARENT`, `SHARELANE_DEPTH` in its environment. The hub refuses a delegation when depth exceeds the limit (default 3) or when it would loop back on its own chain.
 - Output and the full transcript are captured for the dashboard.
+- **Efficiency gate:** the orchestrator handles simple work directly. It delegates only for useful specialization, independent review, parallelism, or an explicit user request, and reuses the same worker session for follow-ups.
 
 ### 6.5 Scoped permissions (R7)
 
@@ -206,6 +207,8 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 ### 6.6 Usage and handoffs (R8, R9)
 
 - Every run records: agent, task, start/end, exit status, tokens (when the CLI's JSON output includes them).
+- **Efficiency target:** when comparable usage is available, orchestration overhead should be roughly 25% or less of the fresh tokens a direct run would need. Show fresh input/output separately from cache reads/writes. This is a workflow target now; Phase 5 adds cumulative task accounting, warnings, and enforceable per-task budgets.
+- Avoid repeated status polling, duplicate reviews, rereading unchanged files, full historical logs, and oversized prompt/output dumps. These are the main preventable sources of multi-agent overhead.
 - **Quota:** agents can read their own plan usage (Manthan has done this in another project for both Codex and Claude). Reading quota goes through the adapter's `usage` field so each CLI's method is isolated and easy to fix if a vendor changes it. **TODO: reuse and verify the approach from that project.**
 - **Handoff policy:**
   - Agents call `log_progress` after each meaningful step, so the task file is always a usable handoff even after a sudden stop.

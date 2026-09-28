@@ -4,14 +4,22 @@ These instructions apply to every agent working anywhere in this repository.
 
 ## Before starting work
 
-1. Read `GLOBAL_CONTEXT.md` to learn the latest project state and recent work.
-2. If you need broader project context, read these files in order:
+1. Read the **Current snapshot** and newest relevant work-log entry in `GLOBAL_CONTEXT.md`. Read older entries only when the task needs that history.
+2. If you need broader project context, use headings or search to read only the relevant sections of these files, in order:
    1. `docs/HANDOFF.md`
    2. `docs/DESIGN.md`
    3. `docs/DECISIONS.md`
    4. `docs/IMPLEMENTATION_PLAN.md`
 3. Check `git status` before editing. Existing changes may belong to the user or another agent; do not overwrite them.
 4. Explain the next small step in plain language before doing it. This is a learning project for a nontechnical owner.
+
+## Token-efficiency policy
+
+- Handle a simple task directly. Delegate only when another agent adds clear value through specialization, independent review, parallel work, or an explicit user request.
+- When usage is measurable, aim to keep orchestration overhead to roughly 25% or less of the fresh tokens a direct run would need. Treat this as a target until Phase 5 adds enforceable budgets.
+- Report fresh input/output separately from cached context. Cached tokens are cheaper but still consume quota and should not hide an inefficient workflow.
+- Start from the context map and load only relevant chunks or document sections. Do not reread unchanged files, old work logs, full transcripts, or large command output unless needed.
+- Reuse the existing task session for follow-ups, avoid repeated status polling, and keep prompts, progress notes, handoffs, and final answers concise.
 
 ## While working
 
@@ -41,4 +49,6 @@ After updating the context, make the planned Git checkpoint when appropriate. In
 ## ShareLane shared context
 
 Before project work, read `.sharelane/context/MAP.md` and then read only the context chunks relevant to the task. After meaningful work, update the affected chunks through ShareLane so the map, search index, and freshness status stay accurate.
+
+Keep token overhead low: handle simple work directly, delegate only when another agent adds clear value, avoid rereading unchanged context or large logs, reuse sessions for follow-ups, and keep messages concise.
 <!-- sharelane-context:end -->

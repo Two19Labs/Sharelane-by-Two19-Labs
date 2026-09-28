@@ -246,7 +246,7 @@ server.registerTool(
   "delegate",
   {
     description:
-      "Start a configured coding agent in the background and immediately return a task ID.",
+      "Start a configured coding agent in the background and immediately return a task ID. Use delegation only when another agent adds specialist, review, parallel, or explicitly requested value.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: true,

@@ -2,14 +2,16 @@
 title: Project conventions
 read-when: Following the project's coding, testing, documentation, or collaboration rules.
 covers-files: ["AGENTS.md","CLAUDE.md","package.json","tsconfig.json"]
-updated-at: 2026-09-28T13:57:00.177Z
-source-hash: c89fdbd4deb1d27a642205b8cbac1835b57ff8a4c4f1afb7344a0a35bddfb002
+updated-at: 2026-09-28T14:18:44.404Z
+source-hash: a1a07d72d045719f8044c5dc783e04fac9476b697d30ab11961e0bf5f2663036
 ---
 
 # Project conventions
 
 Explain each small step in plain language before doing it. Preserve other work, record lasting choices in docs/DECISIONS.md, and append a concise session handoff to GLOBAL_CONTEXT.md before finishing.
 
-Use npm test for protocol and core tests, npm run typecheck for TypeScript, npm audit --audit-level=high for dependency checks, and npm run sharelane -- init for local setup. The calculator example has its own dependency-free node --test suite. Context updates must go through ShareLane so MAP.md, FTS search, and source fingerprints stay synchronized.
+Keep multi-agent overhead marginal. Handle simple work directly; delegate only for clear specialization, independent review, parallelism, or an explicit request. When measurable, target roughly 25% or less fresh-token overhead versus a direct run and report fresh input/output separately from cache reads/writes. This is a workflow target until Phase 5 adds cumulative accounting, warnings, and hard budgets.
 
-Agent commands must use argument arrays with no shell. Persist task state before launching work, preserve cancellation as final, keep status and orphan checks read-only, and use wait when a caller needs the readable task snapshot synchronized with a final database state.
+Read only the current snapshot and newest relevant work-log entry, then use the context map to open only relevant chunks or document sections. Avoid rereading unchanged files, old logs, full transcripts, repeated status polling, and large output dumps. Reuse task sessions for follow-ups and keep prompts, progress notes, handoffs, and final answers concise.
+
+Use npm test for protocol and core tests, npm run typecheck for TypeScript, npm audit --audit-level=high for dependency checks, and npm run sharelane -- init for local setup. Agent commands must use argument arrays with no shell.
