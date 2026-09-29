@@ -14,6 +14,7 @@ import {
   releaseClaims,
 } from "../core/claims.js";
 import { takePendingNotices } from "../core/notices.js";
+import { describeScope } from "../core/scope.js";
 import {
   cancelTask,
   delegateTask,
@@ -23,7 +24,8 @@ import {
   type ShareLaneTask,
 } from "../core/tasks.js";
 
-const workspaceRoot = process.cwd();
+// Delegated workers may start inside a scope folder; the worker exports the checkout root.
+const workspaceRoot = process.env.SHARELANE_WORKSPACE_ROOT || process.cwd();
 const projectRoot = process.env.SHARELANE_PROJECT_ROOT || workspaceRoot;
 const currentAgent = process.env.SHARELANE_AGENT?.trim() || "unknown";
 const currentTaskId = process.env.SHARELANE_TASK_ID?.trim() || undefined;
@@ -56,6 +58,12 @@ function taskStatusText(task: ShareLaneTask): string {
   if (task.resultCommit) lines.push(`Result commit: ${task.resultCommit}`);
   if (task.changedFiles.length > 0) {
     lines.push(`Changed files: ${task.changedFiles.join(", ")}`);
+  }
+  lines.push(`Scope: ${describeScope(task.scope)}`);
+  if (task.scopeViolations.length > 0) {
+    lines.push(
+      `Scope violations (kept off the task branch): ${task.scopeViolations.join(", ")}`,
+    );
   }
   return lines.join("\n");
 }
@@ -334,21 +342,30 @@ server.registerTool(
     inputSchema: {
       agent: z.string().trim().min(1).describe("Configured agent name"),
       task: z.string().trim().min(1).describe("Work for the agent to perform"),
+      scope: z
+        .array(z.string().trim().min(1))
+        .min(1)
+        .max(50)
+        .optional()
+        .describe(
+          "Optional project-relative files, folders, or globs the worker may change, such as src/ui/**. Omit for whole-project access.",
+        ),
     },
   },
-  async ({ agent, task }) => {
+  async ({ agent, task, scope }) => {
     const delegated = delegateTask({
       agent,
       prompt: task,
       projectRoot,
       sourceRoot: workspaceRoot,
       callerAgent: currentAgent,
+      scope,
     });
     const warnings = delegated.duplicateWarnings?.length
       ? ` Warnings: ${delegated.duplicateWarnings.join(" ")}`
       : "";
     return toolReply(
-      `Delegated to ${agent}. Task ID: ${delegated.id}. Status: ${delegated.status}.${warnings}`,
+      `Delegated to ${agent}. Task ID: ${delegated.id}. Status: ${delegated.status}. Scope: ${describeScope(delegated.scope)}.${warnings}`,
       delegated.id,
     );
   },

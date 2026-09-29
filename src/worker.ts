@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 
+import { mkdirSync } from "node:fs";
+import { join, relative } from "node:path";
+import { scopeDirectories } from "./core/scope.js";
+
 import { runAgent } from "./core/runner.js";
 import { contextMap } from "./core/memory.js";
 import { heartbeatClaims, releaseClaims } from "./core/claims.js";
@@ -12,14 +16,24 @@ import {
   getTask,
   latestTaskPrompt,
   markTaskRunning,
+  outOfScopePatchPath,
   recordTaskWorkspaceResult,
   setTaskAgentProcess,
 } from "./core/tasks.js";
+
+function scopeInstructions(scope: string[] | undefined): string[] {
+  if (!scope) return [];
+  return [
+    `- Your write scope is: ${scope.join(", ")}. ShareLane already claimed it for this task; only claim files inside it.`,
+    "- Do not change files outside that scope. Your CLI permissions or ShareLane's hook block such edits, and any that slip through are removed from the task branch and reported.",
+  ];
+}
 
 function delegatedPrompt(
   taskId: string,
   request: string,
   projectRoot: string,
+  scope?: string[],
 ): string {
   return [
     "You are a ShareLane delegated worker.",
@@ -34,6 +48,7 @@ function delegatedPrompt(
     "- Before editing, call ShareLane's claim tool with the exact files or narrow path patterns you will change and a short intent. Overlapping claims are refused.",
     "- Keep claims alive with heartbeat during long work and release them when finished. ShareLane also refreshes task claims automatically.",
     "- You are working in an isolated Git worktree. ShareLane will save changes on the task branch and hand the commit back; do not merge it yourself.",
+    ...scopeInstructions(scope),
     "- Update relevant shared context when your work changes what future agents need to know.",
     "- Keep progress notes and the final summary concise, while still stating what changed and what checks passed.",
     "",
@@ -69,6 +84,7 @@ async function main(): Promise<void> {
     projectRoot,
     worktreePath: task.worktreePath,
     baseCommit: task.baseCommit,
+    scope: task.scope,
   });
   const heartbeat = setInterval(() => {
     try {
@@ -92,8 +108,19 @@ async function main(): Promise<void> {
       taskId: task.id,
       worktreePath: task.worktreePath,
       baseCommit: task.baseCommit,
+      scope: task.scope,
+      patchPath: outOfScopePatchPath(task.id, projectRoot),
     });
     recordTaskWorkspaceResult(task.id, finalized, projectRoot);
+    if (finalized.blockedFiles.length > 0) {
+      createNotice({
+        projectRoot,
+        recipientAgent: task.callerAgent,
+        taskId: task.id,
+        kind: "scope_violation",
+        message: `Task ${task.id} changed ${finalized.blockedFiles.join(", ")} outside its scope (${task.scope?.join(", ")}). Those changes were kept off ${task.branchName ?? "the task branch"} and saved to ${relative(projectRoot, outOfScopePatchPath(task.id, projectRoot)).replaceAll("\\", "/")}.`,
+      });
+    }
     if (!finalized.cleanedUp && task.worktreePath) {
       createNotice({
         projectRoot,
@@ -106,13 +133,19 @@ async function main(): Promise<void> {
   };
   try {
     const latestPrompt = latestTaskPrompt(task.id, projectRoot);
+    const directories = task.scope
+      ? scopeDirectories(task.scope).map((directory) => join(workspaceRoot, directory))
+      : [];
+    // Sandboxed CLIs refuse a missing working folder, so create scope folders first.
+    for (const directory of directories) mkdirSync(directory, { recursive: true });
     const result = await runAgent({
       agent: task.agent,
       prompt: task.sessionId
         ? latestPrompt
-        : delegatedPrompt(task.id, latestPrompt, projectRoot),
+        : delegatedPrompt(task.id, latestPrompt, projectRoot, task.scope),
       projectRoot: workspaceRoot,
       sessionId: task.sessionId,
+      scope: task.scope ? { patterns: task.scope, directories } : undefined,
       logPath: task.logPath,
       onSpawn: (processId) => setTaskAgentProcess(task.id, processId, projectRoot),
     });
@@ -156,7 +189,8 @@ main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   if (taskId) {
     try {
-      getTask(taskId, projectRoot);
+      const task = getTask(taskId, projectRoot);
+      releaseClaims({ agent: task.agent, taskId, projectRoot });
       if (getTask(taskId, projectRoot).status !== "cancelled") {
         failTask(taskId, message, projectRoot);
       }

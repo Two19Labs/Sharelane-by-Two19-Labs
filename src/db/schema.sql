@@ -6,7 +6,7 @@ INSERT INTO schema_info (version)
 SELECT 1
 WHERE NOT EXISTS (SELECT 1 FROM schema_info);
 
-UPDATE schema_info SET version = 3;
+UPDATE schema_info SET version = 4;
 
 CREATE TABLE IF NOT EXISTS chunks (
   id TEXT PRIMARY KEY,
@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   base_commit TEXT,
   result_commit TEXT,
   changed_files_json TEXT CHECK (changed_files_json IS NULL OR json_valid(changed_files_json)),
+  scope_json TEXT CHECK (scope_json IS NULL OR json_valid(scope_json)),
+  scope_violations_json TEXT CHECK (scope_violations_json IS NULL OR json_valid(scope_violations_json)),
   created_at TEXT NOT NULL,
   started_at TEXT,
   finished_at TEXT,

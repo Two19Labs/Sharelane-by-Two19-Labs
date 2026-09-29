@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { pathInScope } from "./scope.js";
 
 export interface TaskWorkspace {
   sourceRoot: string;
@@ -14,6 +15,8 @@ export interface TaskWorkspace {
 export interface FinalizedWorkspace {
   resultCommit?: string;
   changedFiles: string[];
+  /** Out-of-scope paths kept off the task branch (saved to the patch file). */
+  blockedFiles: string[];
   cleanedUp: boolean;
 }
 
@@ -123,16 +126,55 @@ export function listWorkspaceChanges(
   return [...paths].sort();
 }
 
+/**
+ * Save out-of-scope changes as a patch for review, then restore those paths to
+ * the task's starting commit so the task branch holds only in-scope work.
+ */
+function revertOutOfScope(
+  worktreePath: string,
+  baseCommit: string | undefined,
+  paths: string[],
+  patchPath: string | undefined,
+): void {
+  const base = baseCommit ?? "HEAD";
+  if (patchPath) {
+    const patch = git(worktreePath, ["diff", "--cached", "--binary", base, "--", ...paths]);
+    mkdirSync(dirname(patchPath), { recursive: true });
+    writeFileSync(patchPath, patch.stdout, "utf8");
+  }
+  for (const path of paths) {
+    const existedAtBase =
+      git(worktreePath, ["cat-file", "-e", `${base}:${path}`], { allowFailure: true })
+        .status === 0;
+    if (existedAtBase) {
+      git(worktreePath, ["checkout", base, "--", path]);
+    } else {
+      git(worktreePath, ["rm", "-r", "-f", "--cached", "--ignore-unmatch", "--", path]);
+      rmSync(join(worktreePath, path), { recursive: true, force: true });
+    }
+  }
+}
+
 export function finalizeTaskWorkspace(input: {
   projectRoot: string;
   taskId: string;
   worktreePath?: string;
   baseCommit?: string;
+  scope?: string[];
+  patchPath?: string;
 }): FinalizedWorkspace {
-  if (!input.worktreePath) return { changedFiles: [], cleanedUp: false };
+  if (!input.worktreePath) {
+    return { changedFiles: [], blockedFiles: [], cleanedUp: false };
+  }
   const worktreePath = input.worktreePath;
   const changedBeforeCommit = listWorkspaceChanges(worktreePath, input.baseCommit);
   git(worktreePath, ["add", "-A"]);
+  const blockedFiles = input.scope
+    ? changedBeforeCommit.filter((path) => !pathInScope(input.scope ?? [], path))
+    : [];
+  if (blockedFiles.length > 0) {
+    revertOutOfScope(worktreePath, input.baseCommit, blockedFiles, input.patchPath);
+  }
   const stagedCheck = git(worktreePath, ["diff", "--cached", "--quiet"], {
     allowFailure: true,
   });
@@ -157,7 +199,9 @@ export function finalizeTaskWorkspace(input: {
       ...changedBeforeCommit,
       ...listWorkspaceChanges(worktreePath, input.baseCommit),
     ]),
-  ].sort();
+  ]
+    .filter((path) => !blockedFiles.includes(path))
+    .sort();
   const removed = git(
     input.projectRoot,
     ["worktree", "remove", "--force", worktreePath],
@@ -166,7 +210,12 @@ export function finalizeTaskWorkspace(input: {
   if (removed.status === 0) {
     git(input.projectRoot, ["worktree", "prune"], { allowFailure: true });
   }
-  return { resultCommit, changedFiles, cleanedUp: removed.status === 0 };
+  return {
+    resultCommit,
+    changedFiles,
+    blockedFiles,
+    cleanedUp: removed.status === 0,
+  };
 }
 
 export function describeWorkspace(workspace: TaskWorkspace): string {

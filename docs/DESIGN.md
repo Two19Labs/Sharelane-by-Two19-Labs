@@ -1,6 +1,6 @@
 # ShareLane — Design
 
-> Status: **draft; Phases 0–3 implemented**. This file is the source of truth for what we're building and why; update it when a decision changes.
+> Status: **draft; Phases 0–4 implemented**. This file is the source of truth for what we're building and why; update it when a decision changes.
 
 ## 1. What ShareLane is
 
@@ -157,7 +157,9 @@ agents:
   codex:
     run:        codex exec --json -s workspace-write "{prompt}"
     resume:     codex exec resume {session} "{prompt}"
-    scope_flags: ...          # how to express a permission scope for this CLI
+    scope:                    # fills the {scopeArgs} slot in run/resume (§6.5)
+      scoped:   --cd {scopeRoot} --add-dir={scopeExtraDir} ...
+      unscoped: []
     usage:      ...           # how to read remaining quota (§6.6)
     transcripts: ~/.codex/sessions/
     mcp_config: ~/.codex/config.toml
@@ -187,11 +189,11 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 2. **Claims.** `claim(paths, intent)` before editing; the hub refuses overlapping file/glob claims and says who holds them and why. Claims expire after 15 minutes by default, explicit `heartbeat` extends them, task supervisors refresh them every 30 seconds, and terminal tasks release them.
 3. **Duplicate-task detection.** New prompts are compared with queued/running prompts. At 60% or greater word-set overlap, the caller receives a warning while worktree isolation and claims remain the enforcement layers.
 4. **Hooks.** `sharelane init` installs a project Claude Code `PreToolUse` hook for `Edit|Write`. It checks the central claim database and blocks an unclaimed built-in edit before execution.
-5. **Detection and notices.** A task watcher plus final Git diff flags changed paths that the task did not claim. Pending duplicate, edit, and cleanup notices are appended to every successful MCP tool reply. This covers Codex, shell edits, and other paths a Claude hook cannot block.
+5. **Detection and notices.** A task watcher plus final Git diff flags changed paths that the task did not claim, and, for scoped tasks, paths outside the scope (§6.5). Pending duplicate, edit, and cleanup notices are appended to every successful MCP tool reply. This covers Codex, shell edits, and other paths a Claude hook cannot block.
 
 ### 6.4 Delegation (R1, R4, R6)
 
-- `delegate(agent, task, scope?)` → returns `task_id` immediately; the worker runs in the background.
+- `delegate(agent, task, scope?)` → returns `task_id` immediately; the worker runs in the background. Without `scope`, the worker may change the whole project (the Phase 3 behavior).
 - `status(task_id)`, `wait(task_id, timeout)`, `reply(task_id, message)` (resumes the worker's session), `cancel(task_id)`.
 - Every worker gets `SHARELANE_TASK_ID`, `SHARELANE_PARENT`, `SHARELANE_DEPTH` in its environment. The hub refuses a delegation when depth exceeds the limit (default 3) or when it would loop back on its own chain.
 - Output and the full transcript are captured for the dashboard.
@@ -200,9 +202,16 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 ### 6.5 Scoped permissions (R7)
 
 `delegate("codex", "build the navbar", scope=["src/ui/**"])`:
-- claims those paths for the worker,
-- translates the scope into that CLI's flags (sandbox mode, allowed tools, writable dirs) via the adapter,
-- is enforced again by hooks and detection where flags can't express it exactly.
+
+1. **Normalize.** Each entry must be project-relative (no absolute paths, no `..`). `./src/ui/`, `src\ui\**`, and an existing `src/ui` folder all become `src/ui/**`. The scope is stored with the task and shown in status, wait, the task file, and notices.
+2. **Claim.** ShareLane pre-checks the scope against other owners' claims, then claims it for the task in the same transaction that creates the task. An overlapping claim refuses the delegation. The worker's own later claims must stay inside the scope. Claims are refreshed while the task runs, released when it ends, and re-claimed on `reply`.
+3. **Translate to CLI restrictions.** The adapter's `{scopeArgs}` slot receives the agent's strongest native control:
+   - **Claude:** `--permission-mode dontAsk` (tools that are not pre-approved are denied) plus `Edit(<pattern>)`/`Write(<pattern>)` allow rules for each scope entry. Built-in edits outside the scope are refused.
+   - **Codex:** the `workspace-write` sandbox is rooted at the scope's folder with `--cd` (plus `--add-dir` for further folders), and the temp-folder write allowances are removed because ShareLane worktrees live under the temp folder. The sandbox is folder-level, so a file glob inside a folder is enforced by the next two layers.
+4. **Hook.** The Claude `PreToolUse` guard rejects an out-of-scope `Edit`/`Write` before its claim check, with a clear reason.
+5. **Detect and keep off the branch.** The Git watcher records out-of-scope paths as `scope_violation` notices. When the task is saved, ShareLane writes those changes to `.sharelane/tasks/<task>.out-of-scope.patch`, restores the paths to the starting commit, and commits only in-scope work. An escaped write therefore never lands on the task branch.
+
+Agents without a `scope` adapter entry still get layers 1, 2, and 5. In a folder that is not a Git repository there is no worktree, so layer 5 is unavailable and scope relies on claims, CLI flags, and the hook.
 
 ### 6.6 Usage and handoffs (R8, R9)
 
@@ -239,7 +248,7 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 | 1 | Context map + chunks + search tools | Progressive disclosure, SQLite, FTS |
 | 2 | Adapters + async delegation, Claude ↔ Codex both ways | Child processes, parsing JSON streams, task trees |
 | 3 | Worktrees + claims + duplicate detection + hooks | Concurrency, locking, git internals |
-| 4 | Scoped permissions | Each CLI's sandbox model |
+| 4 | Scoped permissions (done) | Each CLI's sandbox model |
 | 5 | Usage, quota checks, handoffs, failover | Designing for failure |
 | 6 | Web dashboard | Reading live state, simple UI |
 | 7 | Gemini + more adapters, `init`, docs, npm publish | Packaging and open-source launch |

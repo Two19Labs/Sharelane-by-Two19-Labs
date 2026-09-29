@@ -1,23 +1,29 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-const [format, prompt, resumedSession] = process.argv.slice(2);
+const [format, prompt, resumedSession, ...extraArgs] = process.argv.slice(2);
 const sessionId = resumedSession || "fake-session-123";
 
+// FAKE_EDIT_PATH may list several comma-separated files, simulating shell writes.
+async function editFiles() {
+  for (const path of (process.env.FAKE_EDIT_PATH || "").split(",").filter(Boolean)) {
+    const editPath = resolve(process.cwd(), path);
+    await mkdir(dirname(editPath), { recursive: true });
+    await writeFile(
+      editPath,
+      process.env.FAKE_EDIT_CONTENT || "edited by fake agent\n",
+      "utf8",
+    );
+  }
+}
+
+// FAKE_EDIT_FIRST writes before the delay, so a test can cancel mid-task.
+if (process.env.FAKE_EDIT_FIRST) await editFiles();
 const delay = Number(process.env.FAKE_AGENT_DELAY_MS || 0);
 if (delay > 0) {
   await new Promise((resolve) => setTimeout(resolve, delay));
 }
-
-if (process.env.FAKE_EDIT_PATH) {
-  const editPath = resolve(process.cwd(), process.env.FAKE_EDIT_PATH);
-  await mkdir(dirname(editPath), { recursive: true });
-  await writeFile(
-    editPath,
-    process.env.FAKE_EDIT_CONTENT || "edited by fake agent\n",
-    "utf8",
-  );
-}
+if (!process.env.FAKE_EDIT_FIRST) await editFiles();
 
 const environmentReport = process.env.FAKE_REPORT_SHARELANE_ENV
   ? `\nENV ${JSON.stringify({
@@ -25,6 +31,9 @@ const environmentReport = process.env.FAKE_REPORT_SHARELANE_ENV
       parent: process.env.SHARELANE_PARENT,
       depth: process.env.SHARELANE_DEPTH,
     })}`
+  : "";
+const argsReport = process.env.FAKE_REPORT_ARGS
+  ? `\nARGS ${JSON.stringify(extraArgs)}`
   : "";
 
 if (format === "codex-jsonl") {
@@ -34,7 +43,7 @@ if (format === "codex-jsonl") {
       type: "item.completed",
       item: {
         type: "agent_message",
-        text: `Codex heard: ${prompt}${environmentReport}`,
+        text: `Codex heard: ${prompt}${environmentReport}${argsReport}`,
       },
     }),
   );

@@ -26,6 +26,9 @@ const taskColumns: Record<string, string> = {
   base_commit: "TEXT",
   result_commit: "TEXT",
   changed_files_json: "TEXT CHECK (changed_files_json IS NULL OR json_valid(changed_files_json))",
+  scope_json: "TEXT CHECK (scope_json IS NULL OR json_valid(scope_json))",
+  scope_violations_json:
+    "TEXT CHECK (scope_violations_json IS NULL OR json_valid(scope_violations_json))",
 };
 
 function migrateExistingDatabase(database: DatabaseSync): void {
@@ -38,7 +41,7 @@ function migrateExistingDatabase(database: DatabaseSync): void {
       database.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${definition}`);
     }
   }
-  database.exec("UPDATE schema_info SET version = 3;");
+  database.exec("UPDATE schema_info SET version = 4;");
 }
 
 export function getShareLanePaths(projectRoot = process.cwd()): ShareLanePaths {

@@ -2,8 +2,8 @@
 title: Project decisions
 read-when: Understanding why a storage, context, testing, or agent-integration choice was made.
 covers-files: ["docs/DECISIONS.md"]
-updated-at: 2026-09-28T14:47:05.038Z
-source-hash: c6c15e895c4a3f6c0b7d37b7146593aad2be39603f8d93cd5c1ec07f7ed7ca3c
+updated-at: 2026-09-29T07:23:11.318Z
+source-hash: a0e1419e74968e6b90248b01d39d57cfb64d63be13bb7688bac0f54c894dc1c6
 ---
 
 # Project decisions
@@ -16,4 +16,6 @@ Decision 43 makes token-efficient orchestration the default: direct execution fo
 
 Phase 3 decisions 44–48 choose external temporary worktrees and reviewable task branches without auto-merge; automatic local commits and checkout cleanup; 15-minute claims with 30-second task heartbeats; conservative file/glob overlap refusal; advisory duplicate warnings at 60% prompt word overlap; a generated Claude edit-blocking hook plus Git fallback detection; and SQLite notices delivered on normal MCP replies.
 
-Phases 1, 2, and 3 are complete. Phase 4 adds scoped permissions on top of the Phase 3 isolation and detection layers.
+Phase 4 decisions 49–53 choose an optional, normalized, persisted delegation scope (no scope keeps whole-project behavior); the scope as the task's atomically created claim, with out-of-scope claims refused; an adapter `{scopeArgs}` slot giving Claude `dontAsk` plus scoped Edit/Write rules and Codex a scope-rooted sandbox without temp-folder writes, plus Codex MCP task-variable forwarding; a scope check in the Claude hook and distinct `scope_violation` detection; and saving out-of-scope changes to a patch while keeping them off the task branch.
+
+Phases 1–4 are complete. Phase 5 adds usage accounting, overhead budgets, quota reading, and handoffs.

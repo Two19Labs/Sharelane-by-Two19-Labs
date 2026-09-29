@@ -5,8 +5,14 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentAdapter, loadAgentRegistry } from "../adapters/adapter.js";
 import type { AgentUsage } from "../adapters/result.js";
-import { findSimilarActiveTasks } from "./collisions.js";
-import { releaseClaims } from "./claims.js";
+import { findSimilarActiveTasks, recordScopeViolations } from "./collisions.js";
+import {
+  assertPathsUnclaimed,
+  claimPathsInTransaction,
+  releaseClaims,
+} from "./claims.js";
+import type { DatabaseSync } from "node:sqlite";
+import { describeScope, normalizeScope } from "./scope.js";
 import { getShareLanePaths, openDatabase } from "./database.js";
 import { createNotice } from "./notices.js";
 import {
@@ -51,6 +57,8 @@ export interface ShareLaneTask {
   baseCommit?: string;
   resultCommit?: string;
   changedFiles: string[];
+  scope?: string[];
+  scopeViolations: string[];
   duplicateWarnings?: string[];
   createdAt: string;
   startedAt?: string;
@@ -80,6 +88,8 @@ interface TaskRow {
   base_commit: string | null;
   result_commit: string | null;
   changed_files_json: string | null;
+  scope_json: string | null;
+  scope_violations_json: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -100,6 +110,8 @@ export interface DelegateTaskInput {
   depth?: number;
   callerAgent?: string;
   sourceRoot?: string;
+  /** Project-relative files, folders, or globs the worker may change. */
+  scope?: string[];
   env?: NodeJS.ProcessEnv;
 }
 
@@ -155,6 +167,10 @@ function fromRow(row: TaskRow): ShareLaneTask {
     resultCommit: row.result_commit ?? undefined,
     changedFiles: row.changed_files_json
       ? (JSON.parse(row.changed_files_json) as string[])
+      : [],
+    scope: row.scope_json ? (JSON.parse(row.scope_json) as string[]) : undefined,
+    scopeViolations: row.scope_violations_json
+      ? (JSON.parse(row.scope_violations_json) as string[])
       : [],
     createdAt: row.created_at,
     startedAt: row.started_at ?? undefined,
@@ -222,6 +238,13 @@ function taskMarkdown(task: ShareLaneTask, projectRoot: string): string {
   if (task.worktreePath) lines.push(`- Temporary worktree: ${task.worktreePath}`);
   if (task.changedFiles.length > 0) {
     lines.push(`- Changed files: ${task.changedFiles.join(", ")}`);
+  }
+  lines.push(`- Scope: ${describeScope(task.scope)}`);
+  if (task.scopeViolations.length > 0) {
+    lines.push(
+      `- Scope violations (kept off the task branch): ${task.scopeViolations.join(", ")}`,
+      `- Out-of-scope patch: ${relative(projectRoot, outOfScopePatchPath(task.id, projectRoot)).replaceAll("\\", "/")}`,
+    );
   }
   const lineage = getTaskLineage(task.id, projectRoot);
   if (lineage.length > 0) lines.push(`- Agent path: ${lineage.join(" -> ")}`);
@@ -307,6 +330,7 @@ function updateTask(
     "base_commit",
     "result_commit",
     "changed_files_json",
+    "scope_violations_json",
     "started_at",
     "finished_at",
     "updated_at",
@@ -575,11 +599,58 @@ export function recordTaskWorkspaceResult(
     {
       result_commit: result.resultCommit ?? null,
       changed_files_json: JSON.stringify(result.changedFiles),
+      ...(result.blockedFiles.length > 0
+        ? {
+            scope_violations_json: JSON.stringify(
+              mergeViolations(taskId, result.blockedFiles, projectRoot),
+            ),
+          }
+        : {}),
       updated_at: new Date().toISOString(),
     },
     projectRoot,
     ["running"],
   ).task;
+}
+
+export function outOfScopePatchPath(
+  taskId: string,
+  projectRoot = process.cwd(),
+): string {
+  return join(getShareLanePaths(projectRoot).tasksDir, `${taskId}.out-of-scope.patch`);
+}
+
+function mergeViolations(
+  taskId: string,
+  paths: string[],
+  projectRoot: string,
+): string[] {
+  const existing = getTask(taskId, projectRoot).scopeViolations;
+  return [...new Set([...existing, ...paths])].sort();
+}
+
+function claimTaskScope(
+  database: DatabaseSync,
+  task: { id: string; agent: string; prompt: string; scope?: string[] },
+): void {
+  if (!task.scope) return;
+  claimPathsInTransaction(database, {
+    agent: task.agent,
+    taskId: task.id,
+    paths: task.scope,
+    intent: `delegated scope for ${task.id}: ${task.prompt.slice(0, 80)}`,
+  });
+}
+
+function workspaceInput(task: ShareLaneTask, projectRoot: string) {
+  return {
+    projectRoot,
+    taskId: task.id,
+    worktreePath: task.worktreePath,
+    baseCommit: task.baseCommit,
+    scope: task.scope,
+    patchPath: outOfScopePatchPath(task.id, projectRoot),
+  };
 }
 
 export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
@@ -614,6 +685,9 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
   }
   lineage = [...lineage, input.agent];
 
+  const scope = normalizeScope(input.scope, projectRoot);
+  if (scope) assertPathsUnclaimed(scope, projectRoot);
+
   const id = `task-${randomUUID()}`;
   const duplicateWarnings = findSimilarActiveTasks(input.prompt, projectRoot).map(
     (similar) =>
@@ -639,6 +713,8 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
     branchName: workspace.branchName,
     baseCommit: workspace.baseCommit,
     changedFiles: [],
+    scope,
+    scopeViolations: [],
     duplicateWarnings,
     taskFile,
     logPath,
@@ -655,8 +731,8 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
         `INSERT INTO tasks (
           id, agent, prompt, status, parent_id, depth, task_file, log_path,
           caller_agent, source_root, worktree_path, branch_name, base_commit,
-          changed_files_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          changed_files_json, scope_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         task.id,
@@ -673,6 +749,7 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
         task.branchName ?? null,
         task.baseCommit ?? null,
         JSON.stringify(task.changedFiles),
+        task.scope ? JSON.stringify(task.scope) : null,
         task.createdAt,
         task.updatedAt,
       );
@@ -687,6 +764,7 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
     lineage.forEach((agent, position) => {
       insertLineage.run(task.id, position, agent);
     });
+    claimTaskScope(database, task);
     database.exec("COMMIT");
   } catch (error) {
     try {
@@ -695,12 +773,7 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
       // Preserve the original database error.
     }
     try {
-      finalizeTaskWorkspace({
-        projectRoot,
-        taskId: task.id,
-        worktreePath: task.worktreePath,
-        baseCommit: task.baseCommit,
-      });
+      finalizeTaskWorkspace(workspaceInput(task, projectRoot));
     } catch {
       // Preserve the database error; the registered worktree remains recoverable.
     }
@@ -725,16 +798,12 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    releaseClaims({ agent: task.agent, taskId: task.id, projectRoot });
     failTask(task.id, `Could not launch task supervisor: ${message}`, projectRoot);
     try {
       recordTaskWorkspaceResult(
         task.id,
-        finalizeTaskWorkspace({
-          projectRoot,
-          taskId: task.id,
-          worktreePath: task.worktreePath,
-          baseCommit: task.baseCommit,
-        }),
+        finalizeTaskWorkspace(workspaceInput(task, projectRoot)),
         projectRoot,
       );
     } catch {
@@ -792,6 +861,7 @@ export function replyToTask(
         "INSERT INTO task_messages (task_id, role, content, created_at) VALUES (?, 'user', ?, ?)",
       )
       .run(taskId, message, now);
+    claimTaskScope(database, task);
     database.exec("COMMIT");
   } catch (error) {
     try {
@@ -801,8 +871,7 @@ export function replyToTask(
     }
     try {
       finalizeTaskWorkspace({
-        projectRoot,
-        taskId,
+        ...workspaceInput(task, projectRoot),
         worktreePath: workspace.worktreePath,
         baseCommit: workspace.baseCommit,
       });
@@ -819,13 +888,13 @@ export function replyToTask(
     return launchTaskWorker(queued, projectRoot, options.env);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    releaseClaims({ agent: task.agent, taskId: task.id, projectRoot });
     failTask(task.id, `Could not launch task supervisor: ${message}`, projectRoot);
     try {
       recordTaskWorkspaceResult(
         task.id,
         finalizeTaskWorkspace({
-          projectRoot,
-          taskId: task.id,
+          ...workspaceInput(queued, projectRoot),
           worktreePath: workspace.worktreePath,
           baseCommit: workspace.baseCommit,
         }),
@@ -897,17 +966,22 @@ export function cancelTask(
   stopProcess(before.workerPid);
   releaseClaims({ agent: before.agent, taskId, projectRoot });
   try {
-    const finalized = finalizeTaskWorkspace({
-      projectRoot,
-      taskId,
-      worktreePath: before.worktreePath,
-      baseCommit: before.baseCommit,
-    });
+    const finalized = finalizeTaskWorkspace(workspaceInput(before, projectRoot));
     recordTaskWorkspaceResult(
       taskId,
       finalized,
       projectRoot,
     );
+    if (finalized.blockedFiles.length > 0) {
+      recordScopeViolations(taskId, finalized.blockedFiles, projectRoot);
+      createNotice({
+        projectRoot,
+        recipientAgent: before.callerAgent,
+        taskId,
+        kind: "scope_violation",
+        message: `Cancelled task ${taskId} had changed ${finalized.blockedFiles.join(", ")} outside its scope; those changes were kept off ${before.branchName ?? "the task branch"} and saved to ${relative(projectRoot, outOfScopePatchPath(taskId, projectRoot)).replaceAll("\\", "/")}.`,
+      });
+    }
     if (!finalized.cleanedUp && before.worktreePath) {
       throw new Error(`could not remove ${before.worktreePath}`);
     }

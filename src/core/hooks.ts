@@ -62,6 +62,23 @@ const databasePath = joinPath(projectRoot, ".sharelane", "sharelane.db");
 if (!existsSync(databasePath)) process.exit(0);
 const ownerKey = taskId ? "task:" + taskId : "agent:" + agent;
 const database = new DatabaseSync(databasePath, { readOnly: true });
+let scope;
+if (taskId) {
+  try {
+    const row = database.prepare("SELECT scope_json FROM tasks WHERE id = ?").get(taskId);
+    if (row && row.scope_json) scope = JSON.parse(row.scope_json);
+  } catch {
+    // Databases created before scoped delegation have no scope column.
+  }
+}
+if (scope && !scope.some((pattern) => globExpression(normalize(pattern)).test(projectPath))) {
+  database.close();
+  console.error(
+    "ShareLane blocked an edit to " + projectPath +
+    " because it is outside this task's delegated scope (" + scope.join(", ") + ")."
+  );
+  process.exit(2);
+}
 const claims = database.prepare(
   "SELECT path_pattern FROM claims WHERE owner_key = ? AND expires_at > ?"
 ).all(ownerKey, new Date().toISOString());

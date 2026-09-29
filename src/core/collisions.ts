@@ -2,6 +2,7 @@ import { openDatabase } from "./database.js";
 import { isPathClaimedBy } from "./claims.js";
 import { createNotice } from "./notices.js";
 import { listWorkspaceChanges } from "./worktrees.js";
+import { pathInScope } from "./scope.js";
 
 const ignoredPromptWords = new Set([
   "a",
@@ -58,17 +59,70 @@ export function findSimilarActiveTasks(
   }
 }
 
+/** Durably add out-of-scope paths to the task record. */
+export function recordScopeViolations(
+  taskId: string,
+  paths: string[],
+  projectRoot: string,
+): void {
+  if (paths.length === 0) return;
+  const database = openDatabase(projectRoot);
+  try {
+    database.exec("BEGIN IMMEDIATE");
+    const row = database
+      .prepare("SELECT scope_violations_json FROM tasks WHERE id = ?")
+      .get(taskId) as { scope_violations_json: string | null } | undefined;
+    const existing = row?.scope_violations_json
+      ? (JSON.parse(row.scope_violations_json) as string[])
+      : [];
+    const merged = [...new Set([...existing, ...paths])].sort();
+    database
+      .prepare(
+        "UPDATE tasks SET scope_violations_json = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(JSON.stringify(merged), new Date().toISOString(), taskId);
+    database.exec("COMMIT");
+  } catch (error) {
+    try {
+      database.exec("ROLLBACK");
+    } catch {
+      // Preserve the original error.
+    }
+    throw error;
+  } finally {
+    database.close();
+  }
+}
+
 export function detectUnclaimedTaskEdits(input: {
   taskId: string;
   agent: string;
   projectRoot: string;
   worktreePath?: string;
   baseCommit?: string;
+  scope?: string[];
   alreadyFlagged?: Set<string>;
 }): string[] {
   if (!input.worktreePath) return [];
   const flagged = input.alreadyFlagged ?? new Set<string>();
-  const unclaimed = listWorkspaceChanges(input.worktreePath, input.baseCommit).filter(
+  const fresh = listWorkspaceChanges(input.worktreePath, input.baseCommit).filter(
+    (path) => !flagged.has(path),
+  );
+  const outOfScope = input.scope
+    ? fresh.filter((path) => !pathInScope(input.scope ?? [], path))
+    : [];
+  for (const path of outOfScope) {
+    flagged.add(path);
+    createNotice({
+      projectRoot: input.projectRoot,
+      recipientAgent: input.agent,
+      taskId: input.taskId,
+      kind: "scope_violation",
+      message: `Out-of-scope edit detected in ${path} (allowed scope: ${input.scope?.join(", ")}). ShareLane will keep it off the task branch and save it as a patch for review.`,
+    });
+  }
+  recordScopeViolations(input.taskId, outOfScope, input.projectRoot);
+  const unclaimed = fresh.filter(
     (path) =>
       !flagged.has(path) &&
       !isPathClaimedBy({
@@ -88,7 +142,7 @@ export function detectUnclaimedTaskEdits(input: {
       message: `Unclaimed edit detected in ${path}. Claim the file before further edits; ShareLane preserved the change on the task branch.`,
     });
   }
-  return unclaimed;
+  return [...outOfScope, ...unclaimed];
 }
 
 export function watchTaskEdits(input: {
@@ -97,6 +151,7 @@ export function watchTaskEdits(input: {
   projectRoot: string;
   worktreePath?: string;
   baseCommit?: string;
+  scope?: string[];
   intervalMilliseconds?: number;
 }): { stop: () => string[] } {
   const flagged = new Set<string>();

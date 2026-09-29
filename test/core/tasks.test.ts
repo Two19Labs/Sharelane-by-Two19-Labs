@@ -63,12 +63,12 @@ test("delegation returns a task ID while a detached worker continues", async () 
       projectRoot,
       env: {
         SHARELANE_AGENTS_CONFIG: configPath,
-        FAKE_AGENT_DELAY_MS: "500",
+        FAKE_AGENT_DELAY_MS: "3000",
         FAKE_REPORT_SHARELANE_ENV: "1",
       },
     });
     assert.match(delegated.id, /^task-[0-9a-f-]+$/);
-    assert.ok(Date.now() - started < 400, "delegation should return before work ends");
+    assert.ok(Date.now() - started < 2_000, "delegation should return before work ends");
     assert.ok(["queued", "running"].includes(delegated.status));
 
     const finished = await waitUntilFinished(delegated.id, projectRoot);

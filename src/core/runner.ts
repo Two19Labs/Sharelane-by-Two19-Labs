@@ -7,6 +7,7 @@ import {
   buildAgentCommand,
   loadAgentRegistry,
   type AgentRegistry,
+  type CommandScope,
 } from "../adapters/adapter.js";
 import {
   parseAgentOutput,
@@ -21,6 +22,7 @@ export interface RunAgentOptions {
   registry?: AgentRegistry;
   logPath?: string;
   env?: NodeJS.ProcessEnv;
+  scope?: CommandScope;
   onSpawn?: (processId: number | undefined) => void;
 }
 
@@ -57,6 +59,7 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
     options.prompt,
     options.sessionId,
     registry,
+    options.scope,
   );
   const logPath = options.logPath ?? defaultLogPath(projectRoot, options.agent);
   await mkdir(dirname(logPath), { recursive: true });

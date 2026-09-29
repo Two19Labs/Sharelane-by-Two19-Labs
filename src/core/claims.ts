@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 import { openDatabase } from "./database.js";
+import { patternWithinScope } from "./scope.js";
 
 export const DEFAULT_CLAIM_TTL_SECONDS = 15 * 60;
 
@@ -133,15 +135,30 @@ function expiresAt(ttlSeconds: number): string {
   return new Date(Date.now() + bounded * 1_000).toISOString();
 }
 
-export function claimPaths(input: {
+export interface ClaimInput {
   agent: string;
   paths: string[];
   intent: string;
   projectRoot?: string;
   taskId?: string;
   ttlSeconds?: number;
-}): ShareLaneClaim[] {
-  const projectRoot = input.projectRoot ?? process.cwd();
+}
+
+function taskScope(database: DatabaseSync, taskId: string): string[] | undefined {
+  const row = database
+    .prepare("SELECT scope_json FROM tasks WHERE id = ?")
+    .get(taskId) as { scope_json: string | null } | undefined;
+  return row?.scope_json ? (JSON.parse(row.scope_json) as string[]) : undefined;
+}
+
+/**
+ * Insert claims using an already-open database inside the caller's transaction.
+ * Refuses paths that overlap another owner or leave the task's delegated scope.
+ */
+export function claimPathsInTransaction(
+  database: DatabaseSync,
+  input: ClaimInput,
+): ShareLaneClaim[] {
   const paths = [...new Set(input.paths.map(normalizeClaimPath))];
   if (paths.length === 0) throw new Error("claim needs at least one path.");
   const agent = input.agent.trim() || "unknown";
@@ -150,66 +167,81 @@ export function claimPaths(input: {
   const ownerKey = claimOwnerKey(agent, input.taskId);
   const now = new Date().toISOString();
   const expiry = expiresAt(input.ttlSeconds ?? DEFAULT_CLAIM_TTL_SECONDS);
-  const database = openDatabase(projectRoot);
+
+  const scope = input.taskId ? taskScope(database, input.taskId) : undefined;
+  if (scope) {
+    const outside = paths.find((path) => !patternWithinScope(scope, path));
+    if (outside) {
+      throw new Error(
+        `Claim refused: "${outside}" is outside this task's delegated scope (${scope.join(", ")}).`,
+      );
+    }
+  }
+
+  database.prepare("DELETE FROM claims WHERE expires_at <= ?").run(now);
+  const active = database
+    .prepare(
+      `SELECT id, owner_key, agent, task_id, path_pattern, intent,
+        created_at, heartbeat_at, expires_at
+       FROM claims WHERE owner_key <> ? AND expires_at > ?`,
+    )
+    .all(ownerKey, now) as unknown as ClaimRow[];
+  for (const path of paths) {
+    const conflict = active.find((claim) =>
+      claimPatternsOverlap(path, claim.path_pattern),
+    );
+    if (conflict) {
+      const holder = conflict.task_id
+        ? `${conflict.agent} on ${conflict.task_id}`
+        : conflict.agent;
+      throw new Error(
+        `Claim refused: "${path}" overlaps "${conflict.path_pattern}", held by ${holder} for ${conflict.intent} until ${conflict.expires_at}.`,
+      );
+    }
+  }
+
+  const removeExisting = database.prepare(
+    "DELETE FROM claims WHERE owner_key = ? AND path_pattern = ?",
+  );
+  const insert = database.prepare(
+    `INSERT INTO claims (
+      id, owner_key, agent, task_id, path_pattern, intent,
+      created_at, heartbeat_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  return paths.map((path) => {
+    removeExisting.run(ownerKey, path);
+    const claim: ShareLaneClaim = {
+      id: `claim-${randomUUID()}`,
+      ownerKey,
+      agent,
+      taskId: input.taskId,
+      path,
+      intent,
+      createdAt: now,
+      heartbeatAt: now,
+      expiresAt: expiry,
+    };
+    insert.run(
+      claim.id,
+      claim.ownerKey,
+      claim.agent,
+      claim.taskId ?? null,
+      claim.path,
+      claim.intent,
+      claim.createdAt,
+      claim.heartbeatAt,
+      claim.expiresAt,
+    );
+    return claim;
+  });
+}
+
+export function claimPaths(input: ClaimInput): ShareLaneClaim[] {
+  const database = openDatabase(input.projectRoot ?? process.cwd());
   try {
     database.exec("BEGIN IMMEDIATE");
-    database.prepare("DELETE FROM claims WHERE expires_at <= ?").run(now);
-    const active = database
-      .prepare(
-        `SELECT id, owner_key, agent, task_id, path_pattern, intent,
-          created_at, heartbeat_at, expires_at
-         FROM claims WHERE owner_key <> ? AND expires_at > ?`,
-      )
-      .all(ownerKey, now) as unknown as ClaimRow[];
-    for (const path of paths) {
-      const conflict = active.find((claim) =>
-        claimPatternsOverlap(path, claim.path_pattern),
-      );
-      if (conflict) {
-        const holder = conflict.task_id
-          ? `${conflict.agent} on ${conflict.task_id}`
-          : conflict.agent;
-        throw new Error(
-          `Claim refused: "${path}" overlaps "${conflict.path_pattern}", held by ${holder} for ${conflict.intent} until ${conflict.expires_at}.`,
-        );
-      }
-    }
-
-    const removeExisting = database.prepare(
-      "DELETE FROM claims WHERE owner_key = ? AND path_pattern = ?",
-    );
-    const insert = database.prepare(
-      `INSERT INTO claims (
-        id, owner_key, agent, task_id, path_pattern, intent,
-        created_at, heartbeat_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    const claims = paths.map((path) => {
-      removeExisting.run(ownerKey, path);
-      const claim: ShareLaneClaim = {
-        id: `claim-${randomUUID()}`,
-        ownerKey,
-        agent,
-        taskId: input.taskId,
-        path,
-        intent,
-        createdAt: now,
-        heartbeatAt: now,
-        expiresAt: expiry,
-      };
-      insert.run(
-        claim.id,
-        claim.ownerKey,
-        claim.agent,
-        claim.taskId ?? null,
-        claim.path,
-        claim.intent,
-        claim.createdAt,
-        claim.heartbeatAt,
-        claim.expiresAt,
-      );
-      return claim;
-    });
+    const claims = claimPathsInTransaction(database, input);
     database.exec("COMMIT");
     return claims;
   } catch (error) {
@@ -221,6 +253,22 @@ export function claimPaths(input: {
     throw error;
   } finally {
     database.close();
+  }
+}
+
+/** Read-only pre-check: throw if another owner already holds an overlapping claim. */
+export function assertPathsUnclaimed(paths: string[], projectRoot = process.cwd()): void {
+  const active = listActiveClaims(projectRoot);
+  for (const path of paths) {
+    const conflict = active.find((claim) => claimPatternsOverlap(path, claim.path));
+    if (conflict) {
+      const holder = conflict.taskId
+        ? `${conflict.agent} on ${conflict.taskId}`
+        : conflict.agent;
+      throw new Error(
+        `Scope refused: "${path}" overlaps "${conflict.path}", held by ${holder} for ${conflict.intent} until ${conflict.expiresAt}. Release or narrow that claim first.`,
+      );
+    }
   }
 }
 
