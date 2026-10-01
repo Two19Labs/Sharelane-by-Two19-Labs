@@ -10,9 +10,9 @@ import {
   loadAgentRegistry,
 } from "../../src/adapters/adapter.js";
 
-test("loads Claude and Codex adapters from YAML", () => {
+test("loads Claude, Codex, and Antigravity adapters from YAML", () => {
   const registry = loadAgentRegistry(defaultAgentsPath);
-  assert.deepEqual(Object.keys(registry.agents).sort(), ["claude", "codex"]);
+  assert.deepEqual(Object.keys(registry.agents).sort(), ["antigravity", "claude", "codex"]);
   assert.equal(registry.agents.claude?.output, "claude-json");
   assert.equal(registry.agents.codex?.output, "codex-jsonl");
 });
@@ -80,6 +80,6 @@ test("a new agent is added through configuration without code changes", async ()
 test("rejects unknown agents with the configured choices", () => {
   assert.throws(
     () => buildAgentCommand("missing", "hello"),
-    /Unknown agent "missing"\. Available agents: claude, codex\./,
+    /Unknown agent "missing"\. Available agents: antigravity, claude, codex\./,
   );
 });

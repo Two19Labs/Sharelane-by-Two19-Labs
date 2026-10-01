@@ -103,11 +103,57 @@ function parseCodexJsonLines(stdout: string): ParsedAgentOutput {
   return { finalMessage, sessionId, usage };
 }
 
+function parseAntigravityJson(stdout: string): ParsedAgentOutput {
+  // Antigravity writes one JSON object to stdout; its logs go to stderr.
+  const start = stdout.search(/^\{/m);
+  if (start === -1) throw new Error("Antigravity returned no JSON output.");
+
+  let value: unknown;
+  try {
+    value = JSON.parse(stdout.slice(start));
+  } catch {
+    throw new Error("Antigravity returned invalid JSON output.");
+  }
+
+  const result = asObject(value);
+  const response = result?.response;
+  const sessionId = result?.conversation_id;
+  if (result?.status !== "SUCCESS") {
+    const detail = typeof response === "string" && response.trim() ? `: ${response.trim()}` : "";
+    throw new Error(`Antigravity finished with status ${String(result?.status)}${detail}`);
+  }
+  if (typeof response !== "string" || typeof sessionId !== "string") {
+    throw new Error("Antigravity output is missing its response or conversation_id.");
+  }
+
+  // Headless mode silently refuses actions that would need approval; say so.
+  const denied = Array.isArray(result?.denied_actions)
+    ? result.denied_actions
+        .map((action) => asObject(action)?.display_name)
+        .filter((name): name is string => typeof name === "string")
+    : [];
+  const note = denied.length
+    ? `\n\n[ShareLane: Antigravity was not permitted to run: ${[...new Set(denied)].join(", ")}]`
+    : "";
+
+  const usage = asObject(result?.usage) ?? {};
+  return {
+    finalMessage: `${response.trimEnd()}${note}`,
+    sessionId,
+    usage: {
+      inputTokens: numberValue(usage.input_tokens),
+      cachedInputTokens: numberValue(usage.cache_read_tokens),
+      outputTokens: numberValue(usage.output_tokens),
+      reasoningOutputTokens: numberValue(usage.thinking_tokens),
+    },
+  };
+}
+
 export function parseAgentOutput(
   format: AgentOutputFormat,
   stdout: string,
 ): ParsedAgentOutput {
-  return format === "claude-json"
-    ? parseClaudeJson(stdout)
-    : parseCodexJsonLines(stdout);
+  if (format === "claude-json") return parseClaudeJson(stdout);
+  if (format === "antigravity-json") return parseAntigravityJson(stdout);
+  return parseCodexJsonLines(stdout);
 }

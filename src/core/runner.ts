@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, existsSync, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, extname, join, relative } from "node:path";
 import { spawn } from "node:child_process";
 import {
   buildAgentCommand,
@@ -51,6 +51,38 @@ function defaultLogPath(projectRoot: string, agent: string): string {
   );
 }
 
+/**
+ * Windows npm installs CLIs as `.cmd` launchers, which Node cannot start
+ * without a shell. Resolve such a launcher to "node <script>" so agent
+ * prompts are still passed as plain arguments with no shell involved.
+ */
+export function resolveAgentExecutable(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { command: string; prefixArgs: string[] } {
+  const unchanged = { command, prefixArgs: [] };
+  if (process.platform !== "win32" || /[\\/]/.test(command) || extname(command)) {
+    return unchanged;
+  }
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
+  const directories = (pathKey ? env[pathKey] ?? "" : "").split(";").filter(Boolean);
+  for (const directory of directories) {
+    // Match Windows' own lookup order within a folder: executables before .cmd.
+    for (const extension of [".com", ".exe"]) {
+      const candidate = join(directory, `${command}${extension}`);
+      if (existsSync(candidate)) return { command: candidate, prefixArgs: [] };
+    }
+    const launcher = join(directory, `${command}.cmd`);
+    if (existsSync(launcher)) {
+      const script = /"%dp0%\\([^"]+\.[cm]?js)"/.exec(readFileSync(launcher, "utf8"))?.[1];
+      if (script && existsSync(join(directory, script))) {
+        return { command: process.execPath, prefixArgs: [join(directory, script)] };
+      }
+    }
+  }
+  return unchanged;
+}
+
 export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
   const projectRoot = options.projectRoot ?? process.cwd();
   const registry = options.registry ?? loadAgentRegistry();
@@ -68,10 +100,13 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
   const log = createWriteStream(logPath, { encoding: "utf8", flags: "a" });
   log.write(`ShareLane run: ${options.agent}\nStarted: ${startedAt}\n\n`);
 
+  const env = { ...process.env, ...options.env };
+  const executable = resolveAgentExecutable(command.command, env);
+
   return await new Promise<AgentRunResult>((resolve, reject) => {
-    const child = spawn(command.command, command.args, {
+    const child = spawn(executable.command, [...executable.prefixArgs, ...command.args], {
       cwd: projectRoot,
-      env: { ...process.env, ...options.env },
+      env,
       shell: false,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],

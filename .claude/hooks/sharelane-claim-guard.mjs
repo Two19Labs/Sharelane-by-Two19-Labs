@@ -38,17 +38,19 @@ function globExpression(pattern) {
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const event = JSON.parse(input);
-const filePath = event?.tool_input?.file_path;
+// Claude sends tool_input.file_path; Antigravity sends toolCall.args.TargetFile.
+const antigravity = Boolean(event?.toolCall);
+const filePath = antigravity ? event.toolCall.args?.TargetFile : event?.tool_input?.file_path;
 const taskId = process.env.SHARELANE_TASK_ID;
 const agent = process.env.SHARELANE_AGENT;
 if (typeof filePath !== "string" || (!taskId && !agent)) process.exit(0);
 
-const cwd = resolve(event.cwd || process.cwd());
-const absolute = resolve(filePath);
+// Antigravity runs hooks from .agents/, so prefer the workspace it reports.
+const cwd = resolve(event.cwd || event.workspacePaths?.[0] || process.cwd());
+const absolute = resolve(cwd, filePath);
 const projectPath = normalize(relative(cwd, absolute));
 if (isAbsolute(projectPath) || projectPath === ".." || projectPath.startsWith("../")) {
-  console.error("ShareLane blocked an edit outside the delegated workspace.");
-  process.exit(2);
+  block("ShareLane blocked an edit outside the delegated workspace.");
 }
 
 const projectRoot = process.env.SHARELANE_PROJECT_ROOT || cwd;
@@ -67,11 +69,10 @@ if (taskId) {
 }
 if (scope && !scope.some((pattern) => globExpression(normalize(pattern)).test(projectPath))) {
   database.close();
-  console.error(
+  block(
     "ShareLane blocked an edit to " + projectPath +
     " because it is outside this task's delegated scope (" + scope.join(", ") + ")."
   );
-  process.exit(2);
 }
 const claims = database.prepare(
   "SELECT path_pattern FROM claims WHERE owner_key = ? AND expires_at > ?"
@@ -81,10 +82,16 @@ const claimed = claims.some(({ path_pattern: pattern }) =>
   globExpression(normalize(pattern)).test(projectPath)
 );
 if (!claimed) {
-  console.error(
+  block(
     "ShareLane blocked an unclaimed edit to " + projectPath +
     ". Call the ShareLane claim tool for this file first."
   );
+}
+
+// Exit code 2 blocks in every supported CLI; Antigravity also reads a JSON decision.
+function block(reason) {
+  if (antigravity) console.log(JSON.stringify({ decision: "deny", reason }));
+  console.error(reason);
   process.exit(2);
 }
 

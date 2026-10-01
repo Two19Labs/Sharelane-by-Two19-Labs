@@ -84,3 +84,32 @@ agents:
         - sandbox_workspace_write.exclude_slash_tmp=true
     output: codex-jsonl
     instructionsFile: AGENTS.md
+
+  antigravity:
+    displayName: Antigravity CLI
+    command: agy
+    # accept-edits approves only file edits in print mode; terminal commands
+    # are refused. ShareLane MCP tools need one global allow rule:
+    # permissions.allow "mcp(sharelane/*)" in ~/.gemini/antigravity-cli/settings.json.
+    run:
+      args:
+        - -p
+        - "{prompt}"
+        - --output-format
+        - json
+        - --mode
+        - accept-edits
+    resume:
+      args:
+        - -p
+        - "{prompt}"
+        - --conversation
+        - "{session}"
+        - --output-format
+        - json
+        - --mode
+        - accept-edits
+    # No native per-path restriction: scope is enforced by claims, the
+    # PreToolUse edit guard in .agents/hooks.json, and Git.
+    output: antigravity-json
+    instructionsFile: AGENTS.md

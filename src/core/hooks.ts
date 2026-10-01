@@ -44,17 +44,19 @@ function globExpression(pattern) {
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const event = JSON.parse(input);
-const filePath = event?.tool_input?.file_path;
+// Claude sends tool_input.file_path; Antigravity sends toolCall.args.TargetFile.
+const antigravity = Boolean(event?.toolCall);
+const filePath = antigravity ? event.toolCall.args?.TargetFile : event?.tool_input?.file_path;
 const taskId = process.env.SHARELANE_TASK_ID;
 const agent = process.env.SHARELANE_AGENT;
 if (typeof filePath !== "string" || (!taskId && !agent)) process.exit(0);
 
-const cwd = resolve(event.cwd || process.cwd());
-const absolute = resolve(filePath);
+// Antigravity runs hooks from .agents/, so prefer the workspace it reports.
+const cwd = resolve(event.cwd || event.workspacePaths?.[0] || process.cwd());
+const absolute = resolve(cwd, filePath);
 const projectPath = normalize(relative(cwd, absolute));
 if (isAbsolute(projectPath) || projectPath === ".." || projectPath.startsWith("../")) {
-  console.error("ShareLane blocked an edit outside the delegated workspace.");
-  process.exit(2);
+  block("ShareLane blocked an edit outside the delegated workspace.");
 }
 
 const projectRoot = process.env.SHARELANE_PROJECT_ROOT || cwd;
@@ -73,11 +75,10 @@ if (taskId) {
 }
 if (scope && !scope.some((pattern) => globExpression(normalize(pattern)).test(projectPath))) {
   database.close();
-  console.error(
+  block(
     "ShareLane blocked an edit to " + projectPath +
     " because it is outside this task's delegated scope (" + scope.join(", ") + ")."
   );
-  process.exit(2);
 }
 const claims = database.prepare(
   "SELECT path_pattern FROM claims WHERE owner_key = ? AND expires_at > ?"
@@ -87,10 +88,16 @@ const claimed = claims.some(({ path_pattern: pattern }) =>
   globExpression(normalize(pattern)).test(projectPath)
 );
 if (!claimed) {
-  console.error(
+  block(
     "ShareLane blocked an unclaimed edit to " + projectPath +
     ". Call the ShareLane claim tool for this file first."
   );
+}
+
+// Exit code 2 blocks in every supported CLI; Antigravity also reads a JSON decision.
+function block(reason) {
+  if (antigravity) console.log(JSON.stringify({ decision: "deny", reason }));
+  console.error(reason);
   process.exit(2);
 }
 
@@ -130,4 +137,48 @@ export function installClaudeClaimHook(projectRoot = process.cwd()): void {
   ];
   settings.hooks = hooks;
   writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+}
+
+function readJson(path: string): Record<string, unknown> {
+  if (!existsSync(path)) return {};
+  const source = readFileSync(path, "utf8").trim();
+  return source ? (JSON.parse(source) as Record<string, unknown>) : {};
+}
+
+/**
+ * Connect Antigravity CLI through workspace files in .agents/: the ShareLane
+ * MCP server and the shared edit guard as a PreToolUse hook. Existing servers
+ * and hooks are preserved. Call after installClaudeClaimHook, which writes the
+ * guard script. Antigravity also needs one global permission rule,
+ * "mcp(sharelane/*)", because its permission rules are global-only.
+ */
+export function installAntigravityIntegration(projectRoot = process.cwd()): void {
+  const directory = join(projectRoot, ".agents");
+  mkdirSync(directory, { recursive: true });
+
+  const mcpPath = join(directory, "mcp_config.json");
+  const mcp = readJson(mcpPath);
+  mcp.mcpServers = {
+    ...(mcp.mcpServers as Record<string, unknown> | undefined),
+    sharelane: {
+      command: "node",
+      args: ["node_modules/tsx/dist/cli.mjs", "src/mcp/server.ts"],
+      env: { SHARELANE_AGENT: "antigravity" },
+    },
+  };
+  writeFileSync(mcpPath, `${JSON.stringify(mcp, null, 2)}\n`, "utf8");
+
+  const hooksPath = join(directory, "hooks.json");
+  const hooks = readJson(hooksPath);
+  hooks["sharelane-claim-guard"] = {
+    enabled: true,
+    PreToolUse: [
+      {
+        matcher: "write_to_file|replace_file_content|multi_replace_file_content",
+        // Antigravity runs workspace hooks from .agents/, hence the "../".
+        hooks: [{ type: "command", command: `node ../.claude/hooks/${HOOK_NAME}` }],
+      },
+    ],
+  };
+  writeFileSync(hooksPath, `${JSON.stringify(hooks, null, 2)}\n`, "utf8");
 }

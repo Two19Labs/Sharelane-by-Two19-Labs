@@ -71,6 +71,17 @@ if (format === "codex-jsonl") {
       },
     }),
   );
+} else if (format === "antigravity-json") {
+  console.log(
+    JSON.stringify({
+      conversation_id: sessionId,
+      status: "SUCCESS",
+      response: `Antigravity heard: ${prompt}${environmentReport}${argsReport}\n`,
+      num_turns: 1,
+      usage: { input_tokens: 12, output_tokens: 5, thinking_tokens: 3, cache_read_tokens: 2, total_tokens: 17 },
+      denied_actions: [{ action: "command", display_name: "RunCommand" }],
+    }),
+  );
 } else {
   console.error(`Unknown fake format: ${format}`);
   process.exitCode = 2;

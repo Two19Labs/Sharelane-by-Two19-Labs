@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { parse } from "yaml";
 
-export const outputFormatSchema = z.enum(["claude-json", "codex-jsonl"]);
+export const outputFormatSchema = z.enum(["claude-json", "codex-jsonl", "antigravity-json"]);
 export type AgentOutputFormat = z.infer<typeof outputFormatSchema>;
 
 const commandTemplateSchema = z.object({
