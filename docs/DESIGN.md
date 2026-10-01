@@ -4,7 +4,7 @@
 
 ## 1. What ShareLane is
 
-A local, open-source hub that lets coding agents (Claude Code, Codex, Gemini CLI, and any other agentic CLI) **share one project memory** and **delegate work to each other**, with no human relaying messages.
+A local, open-source hub that lets coding agents (Claude Code, Codex, Antigravity CLI, and any other agentic CLI) **share one project memory** and **delegate work to each other**, with no human relaying messages.
 
 - **Agent-neutral.** Any supported agent can be the orchestrator; any can be a worker. Adding an agent is a config entry, not new code.
 - **Subscription-only.** Agents run through their official CLIs, logged in with the user's own subscription. ShareLane never touches API keys or auth tokens.
@@ -44,7 +44,7 @@ Each agent is told about the server once, in its own config:
 |---|---|
 | Claude Code (CLI + VS Code extension) | `.mcp.json` in the project, or `claude mcp add` |
 | Codex (CLI + VS Code extension) | `~/.codex/config.toml` → `[mcp_servers.*]` |
-| Gemini CLI | `.gemini/settings.json` → `mcpServers` |
+| Antigravity CLI (`agy`, Google's successor to Gemini CLI) | `.agents/mcp_config.json` in the project, plus a global `mcp(sharelane/*)` allow rule |
 
 Other agents with MCP client support include Cursor, Cline, GitHub Copilot agent mode, OpenCode and Goose. Not every agent has it, so ShareLane also ships a plain **CLI** (`sharelane recall "auth flow"`) that does the same things. Any agent that can run shell commands can use it. MCP is the preferred interface; the CLI is the universal fallback.
 
@@ -55,10 +55,10 @@ Headless mode means running an agent as a one-shot command: prompt in, result ou
 ```text
 claude -p "fix the failing test" --output-format json
 codex exec --json "build the navbar in src/ui"
-gemini -p "write docs for api.ts" --output-format json
+agy -p "write docs for api.ts" --output-format json --mode accept-edits
 ```
 
-Here the **script is in charge and the agent is the worker**. Most support resuming a session (`codex exec resume <id>`, `claude --resume <id>`) and machine-readable output.
+Here the **script is in charge and the agent is the worker**. Most support resuming a session (`codex exec resume <id>`, `claude --resume <id>`, `agy --conversation <id>`) and machine-readable output.
 
 ### 2.3 How ShareLane combines them
 
@@ -75,8 +75,8 @@ Here the **script is in charge and the agent is the worker**. Most support resum
      launches workers in headless mode, in the background
           ┌─────────┼──────────┐
           ▼         ▼          ▼
-       codex     claude     gemini     ← each worker is also connected to ShareLane
-       exec       -p          -p          over MCP, so it sees the same memory
+       codex     claude   antigravity  ← each worker is also connected to ShareLane
+       exec       -p        agy -p        over MCP, so it sees the same memory
 ```
 
 - **MCP** is how any agent *talks to* ShareLane.
@@ -170,7 +170,15 @@ agents:
     transcripts: ~/.claude/projects/
     mcp_config: .mcp.json
     instructions_file: CLAUDE.md
+  antigravity:
+    run:        agy -p "{prompt}" --output-format json --mode accept-edits
+    resume:     agy -p "{prompt}" --conversation {session} ...
+    workerNotes: [...]        # agent-specific lines added to a new task's instructions
+    mcp_config: .agents/mcp_config.json
+    instructions_file: AGENTS.md
 ```
+
+Each CLI's output format needs one small parser in `src/adapters/result.ts`; everything else is configuration. On Windows, npm-installed CLIs are `.cmd` launchers, which ShareLane resolves to "node + script" so agents still start without a shell.
 
 `sharelane init` writes each agent's MCP config and instruction-file pointer for the project.
 
@@ -208,10 +216,10 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 3. **Translate to CLI restrictions.** The adapter's `{scopeArgs}` slot receives the agent's strongest native control:
    - **Claude:** `--permission-mode dontAsk` (tools that are not pre-approved are denied) plus `Edit(<pattern>)`/`Write(<pattern>)` allow rules for each scope entry. Built-in edits outside the scope are refused.
    - **Codex:** the `workspace-write` sandbox is rooted at the scope's folder with `--cd` (plus `--add-dir` for further folders), and the temp-folder write allowances are removed because ShareLane worktrees live under the temp folder. The sandbox is folder-level, so a file glob inside a folder is enforced by the next two layers.
-4. **Hook.** The Claude `PreToolUse` guard rejects an out-of-scope `Edit`/`Write` before its claim check, with a clear reason.
+4. **Hook.** The shared `PreToolUse` guard (Claude `Edit`/`Write`; Antigravity `write_to_file`/`replace_file_content`/`multi_replace_file_content`) rejects an out-of-scope edit before its claim check, with a clear reason.
 5. **Detect and keep off the branch.** The Git watcher records out-of-scope paths as `scope_violation` notices. When the task is saved, ShareLane writes those changes to `.sharelane/tasks/<task>.out-of-scope.patch`, restores the paths to the starting commit, and commits only in-scope work. An escaped write therefore never lands on the task branch.
 
-Agents without a `scope` adapter entry still get layers 1, 2, and 5. In a folder that is not a Git repository there is no worktree, so layer 5 is unavailable and scope relies on claims, CLI flags, and the hook.
+**Antigravity** has no per-path CLI restriction, so its scope relies on layers 1, 2, 4 (`.agents/hooks.json` runs the same guard as Claude) and 5. Agents without a `scope` adapter entry still get layers 1, 2, and 5. In a folder that is not a Git repository there is no worktree, so layer 5 is unavailable and scope relies on claims, CLI flags, and the hook.
 
 ### 6.6 Usage and handoffs (R8, R9)
 
@@ -251,7 +259,7 @@ Agents without a `scope` adapter entry still get layers 1, 2, and 5. In a folder
 | 4 | Scoped permissions (done) | Each CLI's sandbox model |
 | 5 | Usage, quota checks, handoffs, failover | Designing for failure |
 | 6 | Web dashboard | Reading live state, simple UI |
-| 7 | Gemini + more adapters, `init`, docs, npm publish | Packaging and open-source launch |
+| 7 | More adapters (Antigravity done early), `init`, docs, npm publish | Packaging and open-source launch |
 | 8 | VS Code extension | Extension API |
 | 9 | Animated office view (agents as characters) | Animation driven by live data |
 
