@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { scopeDirectories } from "./core/scope.js";
 
+import { getAgentAdapter } from "./adapters/adapter.js";
 import { runAgent } from "./core/runner.js";
 import { contextMap } from "./core/memory.js";
 import { heartbeatClaims, releaseClaims } from "./core/claims.js";
@@ -34,6 +35,7 @@ function delegatedPrompt(
   request: string,
   projectRoot: string,
   scope?: string[],
+  workerNotes: string[] = [],
 ): string {
   return [
     "You are a ShareLane delegated worker.",
@@ -49,6 +51,7 @@ function delegatedPrompt(
     "- Keep claims alive with heartbeat during long work and release them when finished. ShareLane also refreshes task claims automatically.",
     "- You are working in an isolated Git worktree. ShareLane will save changes on the task branch and hand the commit back; do not merge it yourself.",
     ...scopeInstructions(scope),
+    ...workerNotes.map((note) => `- ${note}`),
     "- Update relevant shared context when your work changes what future agents need to know.",
     "- Keep progress notes and the final summary concise, while still stating what changed and what checks passed.",
     "",
@@ -142,7 +145,13 @@ async function main(): Promise<void> {
       agent: task.agent,
       prompt: task.sessionId
         ? latestPrompt
-        : delegatedPrompt(task.id, latestPrompt, projectRoot, task.scope),
+        : delegatedPrompt(
+            task.id,
+            latestPrompt,
+            projectRoot,
+            task.scope,
+            getAgentAdapter(task.agent).workerNotes,
+          ),
       projectRoot: workspaceRoot,
       sessionId: task.sessionId,
       scope: task.scope ? { patterns: task.scope, directories } : undefined,

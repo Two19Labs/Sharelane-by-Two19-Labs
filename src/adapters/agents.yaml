@@ -111,5 +111,7 @@ agents:
         - accept-edits
     # No native per-path restriction: scope is enforced by claims, the
     # PreToolUse edit guard in .agents/hooks.json, and Git.
+    workerNotes:
+      - "Terminal commands are not available in this headless run, and a refused command ends your turn immediately. Do not run git, tests, or any other command; use only your file view/edit tools and ShareLane tools, and say which checks you could not run."
     output: antigravity-json
     instructionsFile: AGENTS.md

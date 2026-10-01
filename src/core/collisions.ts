@@ -2,7 +2,7 @@ import { openDatabase } from "./database.js";
 import { isPathClaimedBy } from "./claims.js";
 import { createNotice } from "./notices.js";
 import { listWorkspaceChanges } from "./worktrees.js";
-import { pathInScope } from "./scope.js";
+import { isShareLaneContextPath, pathInScope } from "./scope.js";
 
 const ignoredPromptWords = new Set([
   "a",
@@ -106,7 +106,7 @@ export function detectUnclaimedTaskEdits(input: {
   if (!input.worktreePath) return [];
   const flagged = input.alreadyFlagged ?? new Set<string>();
   const fresh = listWorkspaceChanges(input.worktreePath, input.baseCommit).filter(
-    (path) => !flagged.has(path),
+    (path) => !flagged.has(path) && !isShareLaneContextPath(path),
   );
   const outOfScope = input.scope
     ? fresh.filter((path) => !pathInScope(input.scope ?? [], path))
@@ -125,6 +125,8 @@ export function detectUnclaimedTaskEdits(input: {
   const unclaimed = fresh.filter(
     (path) =>
       !flagged.has(path) &&
+      // A delegated scope is the task's claim, even if a worker released it early.
+      !(input.scope && pathInScope(input.scope, path)) &&
       !isPathClaimedBy({
         agent: input.agent,
         taskId: input.taskId,

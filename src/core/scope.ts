@@ -43,6 +43,14 @@ function isDirectory(path: string): boolean {
   return existsSync(path) && statSync(path).isDirectory();
 }
 
+/**
+ * ShareLane's own shared-context files (chunks and the generated map) may be
+ * updated by any worker and are never treated as scope or claim violations.
+ */
+export function isShareLaneContextPath(path: string): boolean {
+  return /^\.sharelane\/context\//i.test(path.replaceAll("\\", "/"));
+}
+
 /** True when a concrete project-relative file path is inside the scope. */
 export function pathInScope(scope: string[], path: string): boolean {
   return scope.some((pattern) => claimMatchesPath(pattern, path));

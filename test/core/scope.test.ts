@@ -12,7 +12,7 @@ import {
   defaultAgentsPath,
   loadAgentRegistry,
 } from "../../src/adapters/adapter.js";
-import { claimPaths, listActiveClaims } from "../../src/core/claims.js";
+import { claimPaths, listActiveClaims, releaseClaims } from "../../src/core/claims.js";
 import { openDatabase } from "../../src/core/database.js";
 import { installClaudeClaimHook } from "../../src/core/hooks.js";
 import { listTaskNotices } from "../../src/core/notices.js";
@@ -330,6 +330,80 @@ test("cancelling a scoped task still keeps out-of-scope work off its branch", as
     assert.equal(git(projectRoot, "show", `${delegated.branchName}:README.md`), "main readme");
     assert.ok(existsSync(outOfScopePatchPath(delegated.id, projectRoot)));
     assert.deepEqual(listActiveClaims(projectRoot), []);
+  } finally {
+    await removeProject(projectRoot);
+  }
+});
+
+test("real-agent regressions: kept scope claims, context edits, link cleanup, worker notes", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "sharelane-scope-real-"));
+  const configPath = join(projectRoot, "agents.yaml");
+  await writeFile(
+    configPath,
+    stringify({
+      version: 1,
+      agents: {
+        fake: {
+          displayName: "Fake Agent",
+          command: process.execPath,
+          run: { args: [fixturePath, "codex-jsonl", "{prompt}"] },
+          resume: { args: [fixturePath, "codex-jsonl", "{prompt}", "{session}"] },
+          workerNotes: ["Use file tools only in this fake run."],
+          output: "codex-jsonl",
+          instructionsFile: "AGENTS.md",
+        },
+      },
+    }),
+    "utf8",
+  );
+  try {
+    // Like this repository: dependencies exist, so each worktree gets a node_modules link.
+    await mkdir(join(projectRoot, "node_modules", "dep"), { recursive: true });
+    await writeFile(join(projectRoot, "node_modules", "dep", "index.js"), "", "utf8");
+    await writeFile(join(projectRoot, ".gitignore"), "node_modules/\nagents.yaml\n.sharelane/sharelane.db*\n.sharelane/tasks/\n", "utf8");
+    await mkdir(join(projectRoot, ".sharelane", "context"), { recursive: true });
+    await writeFile(join(projectRoot, ".sharelane", "context", "MAP.md"), "# map\n", "utf8");
+    await writeFile(join(projectRoot, "README.md"), "main readme\n", "utf8");
+    git(projectRoot, "init", "-b", "main");
+    git(projectRoot, "add", ".");
+    git(projectRoot, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "initial");
+
+    const env = {
+      SHARELANE_AGENTS_CONFIG: configPath,
+      FAKE_AGENT_DELAY_MS: "1500",
+      FAKE_EDIT_PATH: "src/ui/Button.ts,.sharelane/context/MAP.md",
+    };
+    const delegated = delegateTask({
+      agent: "fake",
+      callerAgent: "test",
+      prompt: "build the button",
+      scope: ["src/ui/**"],
+      projectRoot,
+      env,
+    });
+    // A worker releasing its own claims (as real agents do) keeps the scope claim.
+    claimPaths({ agent: "fake", taskId: delegated.id, paths: ["src/ui/Extra.ts"], intent: "extra", projectRoot });
+    assert.equal(releaseClaims({ agent: "fake", taskId: delegated.id, projectRoot, keepScope: true }), 1);
+    assert.deepEqual(listActiveClaims(projectRoot).map((claim) => claim.path), ["src/ui/**"]);
+
+    const task = (await waitForTask(delegated.id, 20_000, projectRoot)).task;
+    assert.equal(task.status, "completed", task.error ?? "task failed");
+    assert.match(task.result ?? "", /- Use file tools only in this fake run\./);
+    assert.deepEqual(task.scopeViolations, []);
+    assert.deepEqual(task.changedFiles, [".sharelane/context/MAP.md", "src/ui/Button.ts"]);
+    const notices = listTaskNotices(task.id, projectRoot).map((notice) => notice.kind);
+    assert.ok(!notices.includes("unclaimed_edit"), notices.join(", "));
+    assert.ok(!notices.includes("scope_violation"), notices.join(", "));
+    // The dependency link no longer leaves the temporary folder behind...
+    assert.equal(existsSync(task.worktreePath ?? ""), false);
+    assert.ok(existsSync(join(projectRoot, "node_modules", "dep", "index.js")), "link target must survive");
+
+    // ...and a follow-up can recreate it even if an older run left one.
+    await mkdir(task.worktreePath ?? "", { recursive: true });
+    replyToTask(task.id, "follow up", { projectRoot, env: { ...env, FAKE_EDIT_PATH: "src/ui/Nav.ts" } });
+    const followUp = (await waitForTask(task.id, 20_000, projectRoot)).task;
+    assert.equal(followUp.status, "completed", followUp.error ?? "follow-up failed");
+    assert.equal(existsSync(followUp.worktreePath ?? ""), false);
   } finally {
     await removeProject(projectRoot);
   }

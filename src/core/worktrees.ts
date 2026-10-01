@@ -1,9 +1,19 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  rmdirSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { pathInScope } from "./scope.js";
+import { isShareLaneContextPath, pathInScope } from "./scope.js";
 
 export interface TaskWorkspace {
   sourceRoot: string;
@@ -70,6 +80,23 @@ function linkDependencies(projectRoot: string, worktreePath: string): void {
   );
 }
 
+/** Remove ShareLane's node_modules link (never its target) so Git can delete the checkout. */
+function unlinkDependencies(worktreePath: string): void {
+  const link = join(worktreePath, "node_modules");
+  try {
+    if (lstatSync(link).isSymbolicLink()) unlinkSync(link);
+  } catch {
+    // No link to remove.
+  }
+}
+
+/** Delete a leftover task folder that holds nothing but ShareLane's dependency link. */
+function removeEmptyLeftover(worktreePath: string): void {
+  if (!existsSync(worktreePath)) return;
+  unlinkDependencies(worktreePath);
+  if (readdirSync(worktreePath).length === 0) rmdirSync(worktreePath);
+}
+
 export function createTaskWorkspace(input: {
   projectRoot: string;
   sourceRoot?: string;
@@ -82,6 +109,8 @@ export function createTaskWorkspace(input: {
   const branchName = input.existingBranch ?? `sharelane/${input.taskId}`;
   const baseCommit = git(sourceRoot, ["rev-parse", "HEAD"]).stdout.trim();
   mkdirSync(join(worktreePath, ".."), { recursive: true });
+  // A follow-up reuses the task's folder path; clear an earlier run's leftover.
+  removeEmptyLeftover(worktreePath);
   if (input.existingBranch) {
     git(input.projectRoot, ["worktree", "add", worktreePath, branchName]);
   } else {
@@ -170,7 +199,9 @@ export function finalizeTaskWorkspace(input: {
   const changedBeforeCommit = listWorkspaceChanges(worktreePath, input.baseCommit);
   git(worktreePath, ["add", "-A"]);
   const blockedFiles = input.scope
-    ? changedBeforeCommit.filter((path) => !pathInScope(input.scope ?? [], path))
+    ? changedBeforeCommit.filter(
+        (path) => !isShareLaneContextPath(path) && !pathInScope(input.scope ?? [], path),
+      )
     : [];
   if (blockedFiles.length > 0) {
     revertOutOfScope(worktreePath, input.baseCommit, blockedFiles, input.patchPath);
@@ -202,6 +233,8 @@ export function finalizeTaskWorkspace(input: {
   ]
     .filter((path) => !blockedFiles.includes(path))
     .sort();
+  // Git does not delete the Windows dependency link, which would leave the folder behind.
+  unlinkDependencies(worktreePath);
   const removed = git(
     input.projectRoot,
     ["worktree", "remove", "--force", worktreePath],
@@ -209,6 +242,7 @@ export function finalizeTaskWorkspace(input: {
   );
   if (removed.status === 0) {
     git(input.projectRoot, ["worktree", "prune"], { allowFailure: true });
+    removeEmptyLeftover(worktreePath);
   }
   return {
     resultCommit,

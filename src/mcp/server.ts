@@ -318,11 +318,13 @@ server.registerTool(
     },
   },
   async ({ paths }) => {
+    // A delegated scope stays claimed until the task ends, even if the worker releases.
     const count = releaseClaims({
       agent: currentAgent,
       taskId: currentTaskId,
       paths,
       projectRoot,
+      keepScope: true,
     });
     return toolReply(`Released ${count} claim${count === 1 ? "" : "s"}.`);
   },

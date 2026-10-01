@@ -302,25 +302,33 @@ export function releaseClaims(input: {
   projectRoot?: string;
   taskId?: string;
   paths?: string[];
+  /** Keep a task's delegated-scope claims (used when a worker releases its own claims). */
+  keepScope?: boolean;
 }): number {
   const projectRoot = input.projectRoot ?? process.cwd();
   const ownerKey = claimOwnerKey(input.agent, input.taskId);
   const paths = input.paths?.map(normalizeClaimPath);
   const database = openDatabase(projectRoot);
   try {
+    const kept =
+      input.keepScope && input.taskId ? (taskScope(database, input.taskId) ?? []) : [];
+    const keptClause = kept.length
+      ? ` AND path_pattern NOT IN (${kept.map(() => "?").join(", ")})`
+      : "";
     if (!paths || paths.length === 0) {
       return Number(
-        database.prepare("DELETE FROM claims WHERE owner_key = ?").run(ownerKey)
-          .changes,
+        database
+          .prepare(`DELETE FROM claims WHERE owner_key = ?${keptClause}`)
+          .run(ownerKey, ...kept).changes,
       );
     }
     const placeholders = paths.map(() => "?").join(", ");
     return Number(
       database
         .prepare(
-          `DELETE FROM claims WHERE owner_key = ? AND path_pattern IN (${placeholders})`,
+          `DELETE FROM claims WHERE owner_key = ? AND path_pattern IN (${placeholders})${keptClause}`,
         )
-        .run(ownerKey, ...paths).changes,
+        .run(ownerKey, ...paths, ...kept).changes,
     );
   } finally {
     database.close();

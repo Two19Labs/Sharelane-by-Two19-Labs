@@ -23,6 +23,8 @@ const agentAdapterSchema = z.object({
   run: commandTemplateSchema,
   resume: commandTemplateSchema,
   scope: scopeArgsSchema.optional(),
+  // Agent-specific lines added to a new delegated task's instructions.
+  workerNotes: z.array(z.string().trim().min(1)).optional(),
   output: outputFormatSchema,
   instructionsFile: z.string().trim().min(1),
 });
