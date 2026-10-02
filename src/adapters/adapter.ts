@@ -23,6 +23,8 @@ const agentAdapterSchema = z.object({
   run: commandTemplateSchema,
   resume: commandTemplateSchema,
   scope: scopeArgsSchema.optional(),
+  // Built-in reader for remaining subscription allowance (see src/core/quota.ts).
+  quota: z.enum(["claude", "codex", "none"]).optional(),
   // Agent-specific lines added to a new delegated task's instructions.
   workerNotes: z.array(z.string().trim().min(1)).optional(),
   output: outputFormatSchema,

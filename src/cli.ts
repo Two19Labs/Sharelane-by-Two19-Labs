@@ -5,7 +5,11 @@ import {
   installAgentInstructions,
   installRuntimeIgnores,
 } from "./core/instructions.js";
-import { installClaudeClaimHook, installAntigravityIntegration } from "./core/hooks.js";
+import {
+  installAntigravityIntegration,
+  installClaudeClaimHook,
+  installClaudeUsageStatusLine,
+} from "./core/hooks.js";
 import { runAgent } from "./core/runner.js";
 
 function usage(): string {
@@ -49,6 +53,7 @@ async function run(): Promise<void> {
   installRuntimeIgnores(projectRoot);
   installClaudeClaimHook(projectRoot);
   installAntigravityIntegration(projectRoot);
+  const statusLineInstalled = installClaudeUsageStatusLine(projectRoot);
   // Rebuild once more in case an existing chunk covers an instruction file.
   initializeContext(projectRoot);
 
@@ -62,6 +67,11 @@ async function run(): Promise<void> {
   );
   console.log("Updated agent instructions and local-runtime Git ignores.");
   console.log("Installed Claude edit guard: .claude/settings.json");
+  console.log(
+    statusLineInstalled
+      ? "Installed Claude usage status line (chains to your own): .claude/settings.json"
+      : "Left your project status line alone; Claude quota will use the usage-endpoint fallback.",
+  );
   console.log("Connected Antigravity CLI and its edit guard: .agents/mcp_config.json, .agents/hooks.json");
   console.log("Antigravity also needs permissions.allow \"mcp(sharelane/*)\" in ~/.gemini/antigravity-cli/settings.json.");
 }

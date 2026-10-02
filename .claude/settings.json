@@ -14,5 +14,9 @@
         ]
       }
     ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "node .claude/hooks/sharelane-statusline.mjs"
   }
 }
