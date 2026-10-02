@@ -2,6 +2,8 @@ import type { AgentOutputFormat } from "./adapter.js";
 
 export interface AgentUsage {
   inputTokens?: number;
+  /** Input tokens processed fresh (not read from cache), comparable across CLIs. */
+  freshInputTokens?: number;
   cachedInputTokens?: number;
   cacheWriteInputTokens?: number;
   outputTokens?: number;
@@ -23,6 +25,18 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function sum(...values: unknown[]): number | undefined {
+  const numbers = values.map(numberValue);
+  return numbers.every((value) => value === undefined)
+    ? undefined
+    : numbers.reduce<number>((total, value) => total + (value ?? 0), 0);
+}
+
+function difference(total: unknown, part: unknown): number | undefined {
+  const whole = numberValue(total);
+  return whole === undefined ? undefined : Math.max(0, whole - (numberValue(part) ?? 0));
 }
 
 function parseClaudeJson(stdout: string): ParsedAgentOutput {
@@ -51,6 +65,8 @@ function parseClaudeJson(stdout: string): ParsedAgentOutput {
     sessionId,
     usage: {
       inputTokens: numberValue(usage.input_tokens),
+      // Claude's input_tokens already excludes cache reads; cache writes are fresh work.
+      freshInputTokens: sum(usage.input_tokens, usage.cache_creation_input_tokens),
       cachedInputTokens: numberValue(usage.cache_read_input_tokens),
       cacheWriteInputTokens: numberValue(usage.cache_creation_input_tokens),
       outputTokens: numberValue(usage.output_tokens),
@@ -90,6 +106,8 @@ function parseCodexJsonLines(stdout: string): ParsedAgentOutput {
       const rawUsage = asObject(event.usage) ?? {};
       usage = {
         inputTokens: numberValue(rawUsage.input_tokens),
+        // Codex counts cached tokens inside input_tokens.
+        freshInputTokens: difference(rawUsage.input_tokens, rawUsage.cached_input_tokens),
         cachedInputTokens: numberValue(rawUsage.cached_input_tokens),
         outputTokens: numberValue(rawUsage.output_tokens),
         reasoningOutputTokens: numberValue(rawUsage.reasoning_output_tokens),
@@ -142,6 +160,8 @@ function parseAntigravityJson(stdout: string): ParsedAgentOutput {
     sessionId,
     usage: {
       inputTokens: numberValue(usage.input_tokens),
+      // Antigravity counts cache reads inside input_tokens.
+      freshInputTokens: difference(usage.input_tokens, usage.cache_read_tokens),
       cachedInputTokens: numberValue(usage.cache_read_tokens),
       outputTokens: numberValue(usage.output_tokens),
       reasoningOutputTokens: numberValue(usage.thinking_tokens),

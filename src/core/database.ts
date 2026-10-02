@@ -29,7 +29,54 @@ const taskColumns: Record<string, string> = {
   scope_json: "TEXT CHECK (scope_json IS NULL OR json_valid(scope_json))",
   scope_violations_json:
     "TEXT CHECK (scope_violations_json IS NULL OR json_valid(scope_violations_json))",
+  budget_tokens: "INTEGER",
+  reassignments: "INTEGER NOT NULL DEFAULT 0",
+  handoff_reason: "TEXT",
 };
+
+const oldStatusCheck = "('queued', 'running', 'completed', 'failed', 'cancelled')";
+const newStatusCheck =
+  "('queued', 'running', 'completed', 'failed', 'cancelled', 'needs_reassignment')";
+
+/**
+ * SQLite cannot change a CHECK constraint in place, so a pre-version-5 tasks
+ * table is rebuilt once to accept the needs_reassignment status. Foreign keys
+ * are switched off around the copy so dropping the old table cannot cascade
+ * into messages, lineage, claims, notices, or runs.
+ */
+function allowReassignmentStatus(database: DatabaseSync): void {
+  const tableSql = (): string =>
+    (
+      database
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'")
+        .get() as { sql: string }
+    ).sql;
+  if (!tableSql().includes(oldStatusCheck)) return;
+  database.exec("PRAGMA foreign_keys = OFF;");
+  try {
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      // Another process may have finished the rebuild while this one waited.
+      const sql = tableSql();
+      if (sql.includes(oldStatusCheck)) {
+        const rebuilt = sql
+          .replace(oldStatusCheck, newStatusCheck)
+          .replace(/^CREATE TABLE "?tasks"?/, "CREATE TABLE tasks_rebuild");
+        database.exec(rebuilt);
+        database.exec("INSERT INTO tasks_rebuild SELECT * FROM tasks");
+        database.exec("DROP TABLE tasks");
+        database.exec("ALTER TABLE tasks_rebuild RENAME TO tasks");
+        database.exec(schema);
+      }
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+  } finally {
+    database.exec("PRAGMA foreign_keys = ON;");
+  }
+}
 
 function migrateExistingDatabase(database: DatabaseSync): void {
   const columns = database.prepare("PRAGMA table_info(tasks)").all() as unknown as Array<{
@@ -41,7 +88,8 @@ function migrateExistingDatabase(database: DatabaseSync): void {
       database.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${definition}`);
     }
   }
-  database.exec("UPDATE schema_info SET version = 4;");
+  allowReassignmentStatus(database);
+  database.exec("UPDATE schema_info SET version = 5;");
 }
 
 export function getShareLanePaths(projectRoot = process.cwd()): ShareLanePaths {

@@ -6,7 +6,7 @@ INSERT INTO schema_info (version)
 SELECT 1
 WHERE NOT EXISTS (SELECT 1 FROM schema_info);
 
-UPDATE schema_info SET version = 4;
+UPDATE schema_info SET version = 5;
 
 CREATE TABLE IF NOT EXISTS chunks (
   id TEXT PRIMARY KEY,
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   agent TEXT NOT NULL,
   prompt TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+  status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'needs_reassignment')),
   parent_id TEXT REFERENCES tasks(id),
   depth INTEGER NOT NULL DEFAULT 1,
   session_id TEXT,
@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   changed_files_json TEXT CHECK (changed_files_json IS NULL OR json_valid(changed_files_json)),
   scope_json TEXT CHECK (scope_json IS NULL OR json_valid(scope_json)),
   scope_violations_json TEXT CHECK (scope_violations_json IS NULL OR json_valid(scope_violations_json)),
+  budget_tokens INTEGER,
+  reassignments INTEGER NOT NULL DEFAULT 0,
+  handoff_reason TEXT,
   created_at TEXT NOT NULL,
   started_at TEXT,
   finished_at TEXT,
@@ -72,6 +75,22 @@ ON tasks (parent_id, created_at);
 
 CREATE INDEX IF NOT EXISTS tasks_status_updated_at
 ON tasks (status, updated_at DESC);
+
+-- One row per agent run of a task: the first run, each reply, and each reassignment.
+CREATE TABLE IF NOT EXISTS task_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  agent TEXT NOT NULL,
+  resumed INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
+  usage_json TEXT CHECK (usage_json IS NULL OR json_valid(usage_json)),
+  error TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS task_runs_task_id
+ON task_runs (task_id, id);
 
 CREATE TABLE IF NOT EXISTS task_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

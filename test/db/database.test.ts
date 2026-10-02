@@ -64,7 +64,7 @@ test("built-in SQLite has FTS5 and creates the Phase 1 schema", async () => {
       (database.prepare("SELECT version FROM schema_info").get() as {
         version: number;
       }).version,
-      4,
+      5,
     );
     assert.deepEqual(
       database

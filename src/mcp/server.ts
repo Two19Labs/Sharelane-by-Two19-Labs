@@ -18,6 +18,7 @@ import { describeScope } from "../core/scope.js";
 import {
   cancelTask,
   delegateTask,
+  describeUsage,
   getTask,
   replyToTask,
   waitForTask,
@@ -60,6 +61,7 @@ function taskStatusText(task: ShareLaneTask): string {
     lines.push(`Changed files: ${task.changedFiles.join(", ")}`);
   }
   lines.push(`Scope: ${describeScope(task.scope)}`);
+  lines.push(`Usage: ${describeUsage(task)}`);
   if (task.scopeViolations.length > 0) {
     lines.push(
       `Scope violations (kept off the task branch): ${task.scopeViolations.join(", ")}`,

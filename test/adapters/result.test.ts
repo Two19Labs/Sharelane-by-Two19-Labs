@@ -20,6 +20,7 @@ test("normalizes Claude JSON output", () => {
   assert.equal(result.finalMessage, "Finished from Claude");
   assert.deepEqual(result.usage, {
     inputTokens: 10,
+    freshInputTokens: 12,
     cachedInputTokens: 3,
     cacheWriteInputTokens: 2,
     outputTokens: 4,
@@ -48,6 +49,7 @@ test("normalizes Codex JSON-lines output", () => {
   assert.equal(result.finalMessage, "Finished from Codex");
   assert.deepEqual(result.usage, {
     inputTokens: 20,
+    freshInputTokens: 13,
     cachedInputTokens: 7,
     outputTokens: 8,
     reasoningOutputTokens: 5,

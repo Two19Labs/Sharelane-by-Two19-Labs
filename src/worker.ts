@@ -14,6 +14,8 @@ import { finalizeTaskWorkspace } from "./core/worktrees.js";
 import {
   completeTask,
   failTask,
+  finishTaskRun,
+  startTaskRun,
   getTask,
   latestTaskPrompt,
   markTaskRunning,
@@ -134,6 +136,7 @@ async function main(): Promise<void> {
       });
     }
   };
+  let runId: number | undefined;
   try {
     const latestPrompt = latestTaskPrompt(task.id, projectRoot);
     const directories = task.scope
@@ -141,6 +144,7 @@ async function main(): Promise<void> {
       : [];
     // Sandboxed CLIs refuse a missing working folder, so create scope folders first.
     for (const directory of directories) mkdirSync(directory, { recursive: true });
+    runId = startTaskRun(task.id, task.agent, Boolean(task.sessionId), projectRoot);
     const result = await runAgent({
       agent: task.agent,
       prompt: task.sessionId
@@ -158,6 +162,7 @@ async function main(): Promise<void> {
       logPath: task.logPath,
       onSpawn: (processId) => setTaskAgentProcess(task.id, processId, projectRoot),
     });
+    finishTaskRun(runId, "completed", projectRoot, result.usage);
     saveAndCleanWorkspace();
     clearInterval(heartbeat);
     releaseClaims({ agent: task.agent, taskId: task.id, projectRoot });
@@ -171,6 +176,10 @@ async function main(): Promise<void> {
   } catch (error) {
     clearInterval(heartbeat);
     const message = error instanceof Error ? error.message : String(error);
+    if (runId !== undefined) {
+      const cancelled = getTask(task.id, projectRoot).status === "cancelled";
+      finishTaskRun(runId, cancelled ? "cancelled" : "failed", projectRoot, undefined, message);
+    }
     try {
       if (getTask(task.id, projectRoot).status === "running") {
         saveAndCleanWorkspace();

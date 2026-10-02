@@ -27,7 +27,18 @@ export type TaskStatus =
   | "completed"
   | "failed"
   | "cancelled"
+  | "needs_reassignment"
   | "orphaned";
+
+/** Token totals across every run of a task (first run, replies, reassignments). */
+export interface TaskUsageTotals {
+  runs: number;
+  freshInputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  /** Runs whose CLI reported no usage (for example a run that crashed). */
+  runsWithoutUsage: number;
+}
 
 export interface TaskMessage {
   role: "user" | "assistant";
@@ -59,6 +70,10 @@ export interface ShareLaneTask {
   changedFiles: string[];
   scope?: string[];
   scopeViolations: string[];
+  totalUsage: TaskUsageTotals;
+  budgetTokens?: number;
+  reassignments: number;
+  handoffReason?: string;
   duplicateWarnings?: string[];
   createdAt: string;
   startedAt?: string;
@@ -90,6 +105,9 @@ interface TaskRow {
   changed_files_json: string | null;
   scope_json: string | null;
   scope_violations_json: string | null;
+  budget_tokens: number | null;
+  reassignments: number | null;
+  handoff_reason: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -141,6 +159,16 @@ const tsxPath = fileURLToPath(
 );
 const workerPath = fileURLToPath(new URL("../worker.ts", import.meta.url));
 
+function emptyTotals(): TaskUsageTotals {
+  return {
+    runs: 0,
+    freshInputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    runsWithoutUsage: 0,
+  };
+}
+
 function fromRow(row: TaskRow): ShareLaneTask {
   return {
     id: row.id,
@@ -172,6 +200,10 @@ function fromRow(row: TaskRow): ShareLaneTask {
     scopeViolations: row.scope_violations_json
       ? (JSON.parse(row.scope_violations_json) as string[])
       : [],
+    totalUsage: emptyTotals(),
+    budgetTokens: row.budget_tokens ?? undefined,
+    reassignments: row.reassignments ?? 0,
+    handoffReason: row.handoff_reason ?? undefined,
     createdAt: row.created_at,
     startedAt: row.started_at ?? undefined,
     finishedAt: row.finished_at ?? undefined,
@@ -240,6 +272,9 @@ function taskMarkdown(task: ShareLaneTask, projectRoot: string): string {
     lines.push(`- Changed files: ${task.changedFiles.join(", ")}`);
   }
   lines.push(`- Scope: ${describeScope(task.scope)}`);
+  lines.push(`- Usage: ${describeUsage(task)}`);
+  if (task.reassignments > 0) lines.push(`- Reassignments: ${task.reassignments}`);
+  if (task.handoffReason) lines.push(`- Handoff reason: ${task.handoffReason}`);
   if (task.scopeViolations.length > 0) {
     lines.push(
       `- Scope violations (kept off the task branch): ${task.scopeViolations.join(", ")}`,
@@ -270,6 +305,87 @@ function writeTaskFile(task: ShareLaneTask, projectRoot: string): void {
   renameSync(temporary, task.taskFile);
 }
 
+function usageTotals(database: DatabaseSync, taskId: string): TaskUsageTotals {
+  const totals = emptyTotals();
+  const rows = database
+    .prepare("SELECT usage_json FROM task_runs WHERE task_id = ? ORDER BY id")
+    .all(taskId) as unknown as Array<{ usage_json: string | null }>;
+  for (const row of rows) {
+    totals.runs += 1;
+    const usage = row.usage_json ? (JSON.parse(row.usage_json) as AgentUsage) : undefined;
+    if (!usage || Object.keys(usage).length === 0) {
+      totals.runsWithoutUsage += 1;
+      continue;
+    }
+    totals.freshInputTokens += usage.freshInputTokens ?? 0;
+    totals.cachedInputTokens += usage.cachedInputTokens ?? 0;
+    totals.outputTokens += usage.outputTokens ?? 0;
+  }
+  return totals;
+}
+
+/** Record the start of one agent run; returns the run's id. */
+export function startTaskRun(
+  taskId: string,
+  agent: string,
+  resumed: boolean,
+  projectRoot: string,
+): number {
+  const database = openDatabase(projectRoot);
+  try {
+    return Number(
+      database
+        .prepare(
+          "INSERT INTO task_runs (task_id, agent, resumed, status, started_at) VALUES (?, ?, ?, 'running', ?)",
+        )
+        .run(taskId, agent, resumed ? 1 : 0, new Date().toISOString()).lastInsertRowid,
+    );
+  } finally {
+    database.close();
+  }
+}
+
+export function finishTaskRun(
+  runId: number,
+  status: "completed" | "failed" | "cancelled",
+  projectRoot: string,
+  usage?: AgentUsage,
+  error?: string,
+): void {
+  const database = openDatabase(projectRoot);
+  try {
+    database
+      .prepare(
+        "UPDATE task_runs SET status = ?, usage_json = ?, error = ?, finished_at = ? WHERE id = ? AND status = 'running'",
+      )
+      .run(status, usage ? JSON.stringify(usage) : null, error ?? null, new Date().toISOString(), runId);
+  } finally {
+    database.close();
+  }
+}
+
+/** Plain-language usage line for status replies and task files. */
+export function describeUsage(task: ShareLaneTask): string {
+  const total = task.totalUsage;
+  if (total.runs === 0) return "no runs recorded yet";
+  const parts = [
+    `${total.runs} run${total.runs === 1 ? "" : "s"}`,
+    `fresh input ${total.freshInputTokens}`,
+    `cached input ${total.cachedInputTokens}`,
+    `output ${total.outputTokens}`,
+  ];
+  if (total.runsWithoutUsage > 0) parts.push(`${total.runsWithoutUsage} without usage data`);
+  if (task.budgetTokens) {
+    parts.push(`budget ${freshTokens(task)}/${task.budgetTokens} fresh tokens`);
+  }
+  return parts.join(", ");
+}
+
+/** Fresh tokens spent so far: new input plus output, across all runs. */
+export function freshTokens(task: ShareLaneTask): number {
+  return task.totalUsage.freshInputTokens + task.totalUsage.outputTokens;
+}
+
 export function getTask(
   taskId: string,
   projectRoot = process.cwd(),
@@ -280,7 +396,7 @@ export function getTask(
       | TaskRow
       | undefined;
     if (!row) throw new Error(`Unknown task "${taskId}".`);
-    const task = fromRow(row);
+    const task = { ...fromRow(row), totalUsage: usageTotals(database, taskId) };
     if (
       (task.status === "queued" || task.status === "running") &&
       task.workerPid !== undefined &&
@@ -715,6 +831,8 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
     changedFiles: [],
     scope,
     scopeViolations: [],
+    totalUsage: emptyTotals(),
+    reassignments: 0,
     duplicateWarnings,
     taskFile,
     logPath,
@@ -926,6 +1044,23 @@ export async function waitForTask(
   }
 }
 
+function closeRunningRuns(
+  taskId: string,
+  status: "failed" | "cancelled",
+  projectRoot: string,
+): void {
+  const database = openDatabase(projectRoot);
+  try {
+    database
+      .prepare(
+        "UPDATE task_runs SET status = ?, finished_at = ? WHERE task_id = ? AND status = 'running'",
+      )
+      .run(status, new Date().toISOString(), taskId);
+  } finally {
+    database.close();
+  }
+}
+
 function stopProcess(processId: number | undefined): void {
   if (processId === undefined || processId === process.pid) return;
   try {
@@ -964,6 +1099,7 @@ export function cancelTask(
   }
   stopProcess(before.agentPid);
   stopProcess(before.workerPid);
+  closeRunningRuns(taskId, "cancelled", projectRoot);
   releaseClaims({ agent: before.agent, taskId, projectRoot });
   try {
     const finalized = finalizeTaskWorkspace(workspaceInput(before, projectRoot));
