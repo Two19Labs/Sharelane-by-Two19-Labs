@@ -225,3 +225,13 @@ test("claim tools work through MCP and pending notices ride on the next reply", 
   });
   assert.match(firstText(released), /Released 1 claim/);
 });
+
+test("the usage tool reports allowance and never treats 'could not tell' as fine", async () => {
+  const usage = await client.callTool({ name: "usage", arguments: { agent: "antigravity" } });
+  assert.match(firstText(usage), /antigravity: could not tell \(not the same as fine\)/);
+  assert.match(firstText(usage), /no programmatic usage reader/);
+
+  const reassign = await client.callTool({ name: "reassign", arguments: { taskId: "task-missing" } });
+  assert.equal(reassign.isError, true);
+  assert.match(firstText(reassign), /Unknown task "task-missing"/);
+});

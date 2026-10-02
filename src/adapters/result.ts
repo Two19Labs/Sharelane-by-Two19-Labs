@@ -160,8 +160,8 @@ function parseAntigravityJson(stdout: string): ParsedAgentOutput {
     sessionId,
     usage: {
       inputTokens: numberValue(usage.input_tokens),
-      // Antigravity counts cache reads inside input_tokens.
-      freshInputTokens: difference(usage.input_tokens, usage.cache_read_tokens),
+      // Antigravity reports cache reads separately (total_tokens = input + output).
+      freshInputTokens: numberValue(usage.input_tokens),
       cachedInputTokens: numberValue(usage.cache_read_tokens),
       outputTokens: numberValue(usage.output_tokens),
       reasoningOutputTokens: numberValue(usage.thinking_tokens),

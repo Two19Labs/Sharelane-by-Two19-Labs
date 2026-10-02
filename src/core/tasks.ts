@@ -131,6 +131,8 @@ export interface DelegateTaskInput {
   sourceRoot?: string;
   /** Project-relative files, folders, or globs the worker may change. */
   scope?: string[];
+  /** Optional limit on fresh tokens (new input plus output) across all runs. */
+  budgetTokens?: number;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -805,6 +807,12 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
   lineage = [...lineage, input.agent];
 
   const scope = normalizeScope(input.scope, projectRoot);
+  if (
+    input.budgetTokens !== undefined &&
+    (!Number.isInteger(input.budgetTokens) || input.budgetTokens <= 0)
+  ) {
+    throw new Error("budgetTokens must be a positive whole number of fresh tokens.");
+  }
   if (scope) assertPathsUnclaimed(scope, projectRoot);
 
   const id = `task-${randomUUID()}`;
@@ -835,6 +843,7 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
     scope,
     scopeViolations: [],
     totalUsage: emptyTotals(),
+    budgetTokens: input.budgetTokens,
     reassignments: 0,
     duplicateWarnings,
     taskFile,
@@ -852,8 +861,8 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
         `INSERT INTO tasks (
           id, agent, prompt, status, parent_id, depth, task_file, log_path,
           caller_agent, source_root, worktree_path, branch_name, base_commit,
-          changed_files_json, scope_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          changed_files_json, scope_json, budget_tokens, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         task.id,
@@ -871,6 +880,7 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
         task.baseCommit ?? null,
         JSON.stringify(task.changedFiles),
         task.scope ? JSON.stringify(task.scope) : null,
+        task.budgetTokens ?? null,
         task.createdAt,
         task.updatedAt,
       );
@@ -946,6 +956,7 @@ export function replyToTask(
       `Task "${taskId}" must be completed with a saved session before replying. Current status: ${task.status}.`,
     );
   }
+  assertBudgetLeft(task);
 
   const workspace = createTaskWorkspace({
     projectRoot,
@@ -1283,6 +1294,7 @@ export async function reassignTask(
       `Task "${taskId}" is ${task.status}; only ${allowedFrom.join(" or ")} tasks can be reassigned.`,
     );
   }
+  assertBudgetLeft(task);
   const env = { ...process.env, ...options.env };
   const registry = loadAgentRegistry(env.SHARELANE_AGENTS_CONFIG);
   let agent = options.agent;
@@ -1409,7 +1421,9 @@ export async function handOffTask(
   const task = getTask(taskId, projectRoot);
   writeHandoffNote(task, reason, projectRoot);
   let blocker = `it was already reassigned ${task.reassignments} times (limit ${MAX_REASSIGNMENTS})`;
-  if (task.reassignments < MAX_REASSIGNMENTS) {
+  if (budgetState(task) === "exhausted") {
+    blocker = `its token budget is used up (${freshTokens(task)}/${task.budgetTokens} fresh tokens)`;
+  } else if (task.reassignments < MAX_REASSIGNMENTS) {
     const choice = await chooseReassignmentAgent(task, projectRoot, { ...process.env, ...env });
     if (choice.agent) {
       return reassignTask(taskId, {
@@ -1460,4 +1474,43 @@ export function recordAgentReply(taskId: string, content: string, projectRoot: s
   } finally {
     database.close();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: optional per-task budget of fresh tokens. Usage is reported when a
+// run ends, so the budget is enforced between runs, not in the middle of one.
+// ---------------------------------------------------------------------------
+
+export const BUDGET_WARNING_RATIO = 0.8;
+
+export function budgetState(task: ShareLaneTask): "none" | "ok" | "warning" | "exhausted" {
+  if (!task.budgetTokens) return "none";
+  const spent = freshTokens(task);
+  if (spent >= task.budgetTokens) return "exhausted";
+  return spent >= task.budgetTokens * BUDGET_WARNING_RATIO ? "warning" : "ok";
+}
+
+export function assertBudgetLeft(task: ShareLaneTask): void {
+  if (budgetState(task) === "exhausted") {
+    throw new Error(
+      `Task "${task.id}" has used its budget: ${freshTokens(task)} of ${task.budgetTokens} fresh tokens. No further runs will start.`,
+    );
+  }
+}
+
+/** Tell the caller when a finished run crossed the warning line or used the budget up. */
+export function noticeBudget(taskId: string, projectRoot: string): void {
+  const task = getTask(taskId, projectRoot);
+  const state = budgetState(task);
+  if (state !== "warning" && state !== "exhausted") return;
+  createNotice({
+    projectRoot,
+    recipientAgent: task.callerAgent,
+    taskId,
+    kind: state === "exhausted" ? "budget_exhausted" : "budget_warning",
+    message:
+      state === "exhausted"
+        ? `Task ${taskId} used its budget: ${freshTokens(task)} of ${task.budgetTokens} fresh tokens. ShareLane will not start further runs (replies or reassignments) for it.`
+        : `Task ${taskId} has used ${freshTokens(task)} of its ${task.budgetTokens} fresh-token budget (over ${Math.round(BUDGET_WARNING_RATIO * 100)}%).`,
+  });
 }

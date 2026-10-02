@@ -53,7 +53,7 @@ test("normalizes Antigravity JSON output and reports refused actions", () => {
   );
   assert.deepEqual(result.usage, {
     inputTokens: 10,
-    freshInputTokens: 7,
+    freshInputTokens: 10,
     cachedInputTokens: 3,
     outputTokens: 4,
     reasoningOutputTokens: 2,
@@ -133,7 +133,7 @@ test(
       assert.equal(result.sessionId, "fake-session-123");
       assert.deepEqual(result.usage, {
         inputTokens: 12,
-        freshInputTokens: 10,
+        freshInputTokens: 12,
         cachedInputTokens: 2,
         outputTokens: 5,
         reasoningOutputTokens: 3,

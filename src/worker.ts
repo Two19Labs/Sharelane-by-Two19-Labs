@@ -13,9 +13,11 @@ import { createNotice } from "./core/notices.js";
 import { watchTaskEdits } from "./core/collisions.js";
 import { finalizeTaskWorkspace } from "./core/worktrees.js";
 import {
+  assertBudgetLeft,
   completeTask,
   failTask,
   handOffTask,
+  noticeBudget,
   isAllowanceError,
   recordAgentReply,
   finishTaskRun,
@@ -157,6 +159,8 @@ async function main(): Promise<void> {
     // Sandboxed CLIs refuse a missing working folder, so create scope folders first.
     for (const directory of directories) mkdirSync(directory, { recursive: true });
     const adapter = getAgentAdapter(task.agent);
+    // A task over its fresh-token budget never starts another run.
+    assertBudgetLeft(getTask(task.id, projectRoot));
     // Checkpoint: never start an agent that is already at or below its allowance threshold.
     const quota = await checkQuota(task.agent, adapter.quota);
     if (quota.state === "handoff") {
@@ -181,6 +185,7 @@ async function main(): Promise<void> {
       onSpawn: (processId) => setTaskAgentProcess(task.id, processId, projectRoot),
     });
     finishTaskRun(runId, "completed", projectRoot, result.usage);
+    noticeBudget(task.id, projectRoot);
     if (/^\s*HANDOFF:/i.test(result.finalMessage)) {
       recordAgentReply(task.id, result.finalMessage, projectRoot);
       throw new AllowanceHandoff(

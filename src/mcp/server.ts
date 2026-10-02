@@ -362,9 +362,17 @@ server.registerTool(
         .describe(
           "Optional project-relative files, folders, or globs the worker may change, such as src/ui/**. Omit for whole-project access.",
         ),
+      budgetTokens: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+          "Optional limit on fresh tokens (new input plus output) across all runs of this task, including follow-ups and reassignments.",
+        ),
     },
   },
-  async ({ agent, task, scope }) => {
+  async ({ agent, task, scope, budgetTokens }) => {
     const delegated = delegateTask({
       agent,
       prompt: task,
@@ -372,6 +380,7 @@ server.registerTool(
       sourceRoot: workspaceRoot,
       callerAgent: currentAgent,
       scope,
+      budgetTokens,
     });
     const warnings = delegated.duplicateWarnings?.length
       ? ` Warnings: ${delegated.duplicateWarnings.join(" ")}`
