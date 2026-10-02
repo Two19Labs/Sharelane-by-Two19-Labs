@@ -134,9 +134,17 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
       const code = exitCode ?? 1;
       log.end(`\nFinished: ${finishedAt}\nExit code: ${code}\n`, () => {
         if (code !== 0) {
+          // Some CLIs (Codex) report errors such as "out of credits" in their
+          // JSON output, so include the last error-looking stdout line too.
+          const stdoutError = stdout
+            .split(/\r?\n/)
+            .filter((line) => /error|failed|limit|credit|quota/i.test(line))
+            .at(-1)
+            ?.trim()
+            .slice(0, 400);
           reject(
             new Error(
-              `${options.agent} exited with code ${code}. See ${relative(projectRoot, logPath)}.${stderr.trim() ? ` ${stderr.trim()}` : ""}`,
+              `${options.agent} exited with code ${code}. See ${relative(projectRoot, logPath)}.${stderr.trim() ? ` ${stderr.trim()}` : ""}${stdoutError ? ` Output: ${stdoutError}` : ""}`,
             ),
           );
           return;

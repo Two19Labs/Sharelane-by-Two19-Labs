@@ -61,7 +61,7 @@ after(async () => {
   await rm(projectRoot, { recursive: true, force: true });
 });
 
-test("lists context tools and Phase 3 collision controls", async () => {
+test("lists context tools, collision controls, and Phase 5 handoff tools", async () => {
   const result = await client.listTools();
   assert.deepEqual(
     result.tools.map((tool) => tool.name),
@@ -82,6 +82,8 @@ test("lists context tools and Phase 3 collision controls", async () => {
       "wait",
       "reply",
       "cancel",
+      "usage",
+      "reassign",
       "log_progress",
     ],
   );

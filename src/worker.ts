@@ -5,6 +5,7 @@ import { join, relative } from "node:path";
 import { scopeDirectories } from "./core/scope.js";
 
 import { getAgentAdapter } from "./adapters/adapter.js";
+import { checkQuota } from "./core/quota.js";
 import { runAgent } from "./core/runner.js";
 import { contextMap } from "./core/memory.js";
 import { heartbeatClaims, releaseClaims } from "./core/claims.js";
@@ -14,6 +15,9 @@ import { finalizeTaskWorkspace } from "./core/worktrees.js";
 import {
   completeTask,
   failTask,
+  handOffTask,
+  isAllowanceError,
+  recordAgentReply,
   finishTaskRun,
   startTaskRun,
   getTask,
@@ -30,6 +34,13 @@ function scopeInstructions(scope: string[] | undefined): string[] {
     `- Your write scope is: ${scope.join(", ")}. ShareLane already claimed it for this task; only claim files inside it.`,
     "- Do not change files outside that scope. Your CLI permissions or ShareLane's hook block such edits, and any that slip through are removed from the task branch and reported.",
   ];
+}
+
+/** The agent cannot (or should not) continue; save its work and hand the task on. */
+class AllowanceHandoff extends Error {}
+
+function firstLine(text: string): string {
+  return text.trim().split("\n")[0]?.slice(0, 300) ?? "";
 }
 
 function delegatedPrompt(
@@ -56,6 +67,7 @@ function delegatedPrompt(
     ...workerNotes.map((note) => `- ${note}`),
     "- Update relevant shared context when your work changes what future agents need to know.",
     "- Keep progress notes and the final summary concise, while still stating what changed and what checks passed.",
+    "- Between major steps (not continuously), call ShareLane's usage tool. If it says HAND OFF, stop starting new work, make your changes consistent, record a log_progress handoff (done, in progress, next steps), and begin your final reply with \"HANDOFF:\" so ShareLane can pass the task to another agent.",
     "",
     "Request:",
     request,
@@ -144,6 +156,12 @@ async function main(): Promise<void> {
       : [];
     // Sandboxed CLIs refuse a missing working folder, so create scope folders first.
     for (const directory of directories) mkdirSync(directory, { recursive: true });
+    const adapter = getAgentAdapter(task.agent);
+    // Checkpoint: never start an agent that is already at or below its allowance threshold.
+    const quota = await checkQuota(task.agent, adapter.quota);
+    if (quota.state === "handoff") {
+      throw new AllowanceHandoff(`${task.agent} was at its allowance threshold before starting: ${quota.reason}`);
+    }
     runId = startTaskRun(task.id, task.agent, Boolean(task.sessionId), projectRoot);
     const result = await runAgent({
       agent: task.agent,
@@ -154,7 +172,7 @@ async function main(): Promise<void> {
             latestPrompt,
             projectRoot,
             task.scope,
-            getAgentAdapter(task.agent).workerNotes,
+            adapter.workerNotes,
           ),
       projectRoot: workspaceRoot,
       sessionId: task.sessionId,
@@ -163,6 +181,12 @@ async function main(): Promise<void> {
       onSpawn: (processId) => setTaskAgentProcess(task.id, processId, projectRoot),
     });
     finishTaskRun(runId, "completed", projectRoot, result.usage);
+    if (/^\s*HANDOFF:/i.test(result.finalMessage)) {
+      recordAgentReply(task.id, result.finalMessage, projectRoot);
+      throw new AllowanceHandoff(
+        `${task.agent} stopped at a checkpoint to hand off: ${firstLine(result.finalMessage.replace(/^\s*HANDOFF:\s*/i, ""))}`,
+      );
+    }
     saveAndCleanWorkspace();
     clearInterval(heartbeat);
     releaseClaims({ agent: task.agent, taskId: task.id, projectRoot });
@@ -194,6 +218,25 @@ async function main(): Promise<void> {
       });
     }
     releaseClaims({ agent: task.agent, taskId: task.id, projectRoot });
+    const handoffReason =
+      error instanceof AllowanceHandoff
+        ? message
+        : isAllowanceError(message)
+          ? `${task.agent} ran out of allowance: ${firstLine(message)}`
+          : undefined;
+    if (handoffReason && getTask(task.id, projectRoot).status === "running") {
+      try {
+        // A brokered supervisor relaunches through the broker; a directly
+        // spawned one (tests, custom environments) relaunches directly.
+        const relaunchEnv = process.argv.length >= 4 ? undefined : {};
+        await handOffTask(task.id, handoffReason, projectRoot, relaunchEnv);
+        return;
+      } catch (handoffError) {
+        const detail = handoffError instanceof Error ? handoffError.message : String(handoffError);
+        failTask(task.id, `${handoffReason}. Handoff failed: ${detail}`, projectRoot);
+        return;
+      }
+    }
     if (getTask(task.id, projectRoot).status !== "cancelled") {
       failTask(task.id, message, projectRoot);
     }

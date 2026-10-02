@@ -13,6 +13,7 @@ import {
 } from "./claims.js";
 import type { DatabaseSync } from "node:sqlite";
 import { describeScope, normalizeScope } from "./scope.js";
+import { checkQuota } from "./quota.js";
 import { getShareLanePaths, openDatabase } from "./database.js";
 import { createNotice } from "./notices.js";
 import {
@@ -147,6 +148,7 @@ const terminalStatuses = new Set<TaskStatus>([
   "completed",
   "failed",
   "cancelled",
+  "needs_reassignment",
   "orphaned",
 ]);
 const persistedTerminalStatuses = new Set<TaskStatus>([
@@ -447,6 +449,7 @@ function updateTask(
     "result_commit",
     "changed_files_json",
     "scope_violations_json",
+    "handoff_reason",
     "started_at",
     "finished_at",
     "updated_at",
@@ -1092,7 +1095,7 @@ export function cancelTask(
       updated_at: now,
     },
     projectRoot,
-    ["queued", "running"],
+    ["queued", "running", "needs_reassignment"],
   );
   if (!cancelled.changed) {
     throw new Error(`Task "${taskId}" changed before it could be cancelled.`);
@@ -1143,4 +1146,318 @@ export function latestTaskPrompt(
     if (message?.role === "user") return message.content;
   }
   throw new Error(`Task "${taskId}" has no request message.`);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: handoff and reassignment when an agent runs out of allowance.
+// ---------------------------------------------------------------------------
+
+/** A task is reassigned at most this many times, so agents cannot ping-pong forever. */
+export const MAX_REASSIGNMENTS = 2;
+
+const allowanceErrorPattern =
+  /out of credits|credits? (?:are |were )?depleted|usage limit|rate[- ]?limit|quota|exceeded your|limit (?:has been )?reached|resource[_ ]exhausted|\b429\b/i;
+
+/** True when an agent's failure means it ran out of allowance rather than failed the work. */
+export function isAllowanceError(message: string): boolean {
+  return allowanceErrorPattern.test(message);
+}
+
+export function handoffNotePath(taskId: string, projectRoot = process.cwd()): string {
+  return join(getShareLanePaths(projectRoot).tasksDir, `${taskId}.handoff.md`);
+}
+
+function journalFor(
+  taskId: string,
+  projectRoot: string,
+): Array<{ agent: string; note: string; created_at: string }> {
+  const database = openDatabase(projectRoot);
+  try {
+    return database
+      .prepare("SELECT agent, note, created_at FROM journal WHERE task = ? ORDER BY created_at, id")
+      .all(taskId) as unknown as Array<{ agent: string; note: string; created_at: string }>;
+  } finally {
+    database.close();
+  }
+}
+
+/**
+ * Write the handoff a fresh agent needs to continue without asking a question:
+ * the original request, follow-ups, progress notes, saved work, and why.
+ */
+export function writeHandoffNote(task: ShareLaneTask, reason: string, projectRoot: string): string {
+  const messages = listTaskMessages(task.id, projectRoot);
+  const requests = messages.filter((message) => message.role === "user");
+  const replies = messages.filter((message) => message.role === "assistant");
+  const notes = journalFor(task.id, projectRoot);
+  const saved = task.branchName
+    ? `branch ${task.branchName}${task.resultCommit ? ` at ${task.resultCommit}` : ""}`
+    : "no Git branch (direct workspace)";
+  const lines = [
+    `# Handoff for ${task.id}`,
+    "",
+    `- From: ${task.agent}`,
+    `- Why: ${reason}`,
+    `- Scope: ${describeScope(task.scope)}`,
+    `- Saved work: ${saved}`,
+    `- Changed so far: ${task.changedFiles.length ? task.changedFiles.join(", ") : "nothing recorded"}`,
+    "",
+    "## Original request",
+    "",
+    requests[0]?.content ?? task.prompt,
+  ];
+  if (requests.length > 1) {
+    lines.push("", "## Later requests", "");
+    for (const request of requests.slice(1)) lines.push(`- ${request.content.split("\n")[0]}`);
+  }
+  lines.push("", "## Progress notes", "");
+  if (notes.length === 0) lines.push("- None were logged; inspect the saved changes before continuing.");
+  for (const note of notes) lines.push(`- ${note.created_at} ${note.agent}: ${note.note}`);
+  const lastReply = replies.at(-1)?.content;
+  if (lastReply) lines.push("", "## Last reply from the previous agent", "", lastReply);
+  const text = `${lines.join("\n")}\n`;
+  const path = handoffNotePath(task.id, projectRoot);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, text, "utf8");
+  return text;
+}
+
+/**
+ * Pick the next agent: configured, not already in the delegation chain above
+ * this task, not already tried on it, and not itself out of allowance.
+ * "Could not tell" does not disqualify an agent; "hand off" does.
+ */
+export async function chooseReassignmentAgent(
+  task: ShareLaneTask,
+  projectRoot: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ agent?: string; skipped: string[] }> {
+  const registry = loadAgentRegistry(
+    env.SHARELANE_AGENTS_CONFIG || process.env.SHARELANE_AGENTS_CONFIG,
+  );
+  const callers = getTaskLineage(task.id, projectRoot).slice(0, -1);
+  const database = openDatabase(projectRoot);
+  let tried: Set<string>;
+  try {
+    const rows = database
+      .prepare("SELECT DISTINCT agent FROM task_runs WHERE task_id = ?")
+      .all(task.id) as unknown as Array<{ agent: string }>;
+    tried = new Set(rows.map((row) => row.agent));
+  } finally {
+    database.close();
+  }
+  tried.add(task.agent);
+  const skipped: string[] = [];
+  for (const [name, adapter] of Object.entries(registry.agents)) {
+    if (callers.includes(name) || tried.has(name)) continue;
+    const quota = await checkQuota(name, adapter.quota);
+    if (quota.state === "handoff") {
+      skipped.push(`${name} (${quota.reason})`);
+      continue;
+    }
+    return { agent: name, skipped };
+  }
+  return { skipped };
+}
+
+/**
+ * Give a task to another agent, continuing on the same task branch with the
+ * handoff note as its instructions. Used automatically by the worker and by
+ * the reassign tool for tasks waiting in needs_reassignment (or failed ones).
+ */
+export async function reassignTask(
+  taskId: string,
+  options: {
+    projectRoot?: string;
+    env?: NodeJS.ProcessEnv;
+    agent?: string;
+    reason?: string;
+    allowedFrom?: TaskStatus[];
+  } = {},
+): Promise<ShareLaneTask> {
+  const projectRoot = options.projectRoot ?? process.cwd();
+  const allowedFrom = options.allowedFrom ?? ["needs_reassignment", "failed"];
+  const task = getTask(taskId, projectRoot);
+  if (!allowedFrom.includes(task.status)) {
+    throw new Error(
+      `Task "${taskId}" is ${task.status}; only ${allowedFrom.join(" or ")} tasks can be reassigned.`,
+    );
+  }
+  const env = { ...process.env, ...options.env };
+  const registry = loadAgentRegistry(env.SHARELANE_AGENTS_CONFIG);
+  let agent = options.agent;
+  if (agent) {
+    getAgentAdapter(agent, registry);
+    if (getTaskLineage(taskId, projectRoot).slice(0, -1).includes(agent)) {
+      throw new Error(`Reassignment refused: ${agent} is already in this task's delegation chain.`);
+    }
+  } else {
+    const choice = await chooseReassignmentAgent(task, projectRoot, env);
+    if (!choice.agent) {
+      const skipped = choice.skipped.length ? ` Skipped: ${choice.skipped.join("; ")}.` : "";
+      throw new Error(`No agent is available to take over ${taskId}.${skipped}`);
+    }
+    agent = choice.agent;
+  }
+  const reason = options.reason ?? task.handoffReason ?? "manual reassignment";
+  const note = writeHandoffNote(task, reason, projectRoot);
+  const prompt = [
+    `ShareLane handed this task to you from ${task.agent} because: ${reason}`,
+    "Continue from the work already saved on this task branch (it is checked out in your workspace). Do not redo finished parts; check the saved changes first.",
+    "",
+    note,
+  ].join("\n");
+
+  const workspace = createTaskWorkspace({
+    projectRoot,
+    sourceRoot: task.sourceRoot ?? projectRoot,
+    taskId,
+    existingBranch: task.branchName,
+  });
+  const now = new Date().toISOString();
+  const database = openDatabase(projectRoot);
+  try {
+    database.exec("BEGIN IMMEDIATE");
+    const statusList = allowedFrom.map(() => "?").join(", ");
+    const updated = database
+      .prepare(
+        `UPDATE tasks SET agent = ?, status = 'queued', session_id = NULL, result = NULL,
+          error = NULL, worker_pid = NULL, agent_pid = NULL, finished_at = NULL,
+          source_root = ?, worktree_path = ?, branch_name = ?, base_commit = ?,
+          reassignments = reassignments + 1, handoff_reason = ?, updated_at = ?
+         WHERE id = ? AND status IN (${statusList})`,
+      )
+      .run(
+        agent,
+        workspace.sourceRoot,
+        workspace.worktreePath ?? null,
+        workspace.branchName ?? null,
+        workspace.baseCommit ?? null,
+        reason,
+        now,
+        taskId,
+        ...allowedFrom,
+      );
+    if (updated.changes === 0) {
+      throw new Error(`Task "${taskId}" changed before it could be reassigned.`);
+    }
+    database
+      .prepare(
+        "INSERT INTO task_messages (task_id, role, content, created_at) VALUES (?, 'user', ?, ?)",
+      )
+      .run(taskId, prompt, now);
+    database
+      .prepare(
+        "UPDATE task_lineage SET agent = ? WHERE task_id = ? AND position = (SELECT MAX(position) FROM task_lineage WHERE task_id = ?)",
+      )
+      .run(agent, taskId, taskId);
+    claimTaskScope(database, { ...task, agent });
+    database.exec("COMMIT");
+  } catch (error) {
+    try {
+      database.exec("ROLLBACK");
+    } catch {
+      // Preserve the original error.
+    }
+    try {
+      finalizeTaskWorkspace({
+        ...workspaceInput(task, projectRoot),
+        worktreePath: workspace.worktreePath,
+        baseCommit: workspace.baseCommit,
+      });
+    } catch {
+      // The registered worktree remains recoverable.
+    }
+    throw error;
+  } finally {
+    database.close();
+  }
+  createNotice({
+    projectRoot,
+    recipientAgent: task.callerAgent,
+    taskId,
+    kind: "handoff",
+    message: `Task ${taskId} was handed from ${task.agent} to ${agent}: ${reason}. Handoff note: ${relativeTaskPath(handoffNotePath(taskId, projectRoot), projectRoot)}.`,
+  });
+  const queued = getTask(taskId, projectRoot);
+  writeTaskFile(queued, projectRoot);
+  try {
+    return launchTaskWorker(queued, projectRoot, options.env);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    releaseClaims({ agent, taskId, projectRoot });
+    failTask(taskId, `Could not launch task supervisor: ${message}`, projectRoot);
+    throw error;
+  }
+}
+
+function relativeTaskPath(path: string, projectRoot: string): string {
+  return relative(projectRoot, path).split("\\").join("/");
+}
+
+/**
+ * Called by a worker whose agent ran out of allowance, after its work was saved:
+ * reassign automatically when possible, otherwise park the task as
+ * needs_reassignment and tell the caller.
+ */
+export async function handOffTask(
+  taskId: string,
+  reason: string,
+  projectRoot: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<ShareLaneTask> {
+  const task = getTask(taskId, projectRoot);
+  writeHandoffNote(task, reason, projectRoot);
+  let blocker = `it was already reassigned ${task.reassignments} times (limit ${MAX_REASSIGNMENTS})`;
+  if (task.reassignments < MAX_REASSIGNMENTS) {
+    const choice = await chooseReassignmentAgent(task, projectRoot, { ...process.env, ...env });
+    if (choice.agent) {
+      return reassignTask(taskId, {
+        projectRoot,
+        env,
+        agent: choice.agent,
+        reason,
+        allowedFrom: ["running"],
+      });
+    }
+    const skipped = choice.skipped.length ? ` (skipped: ${choice.skipped.join("; ")})` : "";
+    blocker = `no other agent is available${skipped}`;
+  }
+  const now = new Date().toISOString();
+  const parked = updateTask(
+    taskId,
+    {
+      status: "needs_reassignment",
+      handoff_reason: reason,
+      agent_pid: null,
+      worker_pid: null,
+      finished_at: now,
+      updated_at: now,
+    },
+    projectRoot,
+    ["running"],
+  ).task;
+  const branch = task.branchName ? ` on ${task.branchName}` : "";
+  createNotice({
+    projectRoot,
+    recipientAgent: task.callerAgent,
+    taskId,
+    kind: "handoff",
+    message: `Task ${taskId} needs reassignment: ${reason}. ShareLane did not reassign it because ${blocker}. Its work is saved${branch}; see ${relativeTaskPath(handoffNotePath(taskId, projectRoot), projectRoot)} and use the reassign tool.`,
+  });
+  return parked;
+}
+
+/** Store an agent's reply that did not complete the task (for example a HANDOFF). */
+export function recordAgentReply(taskId: string, content: string, projectRoot: string): void {
+  const database = openDatabase(projectRoot);
+  try {
+    database
+      .prepare(
+        "INSERT INTO task_messages (task_id, role, content, created_at) VALUES (?, 'assistant', ?, ?)",
+      )
+      .run(taskId, content, new Date().toISOString());
+  } finally {
+    database.close();
+  }
 }

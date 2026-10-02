@@ -15,10 +15,13 @@ import {
 } from "../core/claims.js";
 import { takePendingNotices } from "../core/notices.js";
 import { describeScope } from "../core/scope.js";
+import { checkQuota, describeQuota } from "../core/quota.js";
+import { getAgentAdapter, loadAgentRegistry } from "../adapters/adapter.js";
 import {
   cancelTask,
   delegateTask,
   describeUsage,
+  reassignTask,
   getTask,
   replyToTask,
   waitForTask,
@@ -62,6 +65,11 @@ function taskStatusText(task: ShareLaneTask): string {
   }
   lines.push(`Scope: ${describeScope(task.scope)}`);
   lines.push(`Usage: ${describeUsage(task)}`);
+  if (task.reassignments > 0) lines.push(`Reassignments: ${task.reassignments}`);
+  if (task.handoffReason) lines.push(`Handoff reason: ${task.handoffReason}`);
+  if (task.status === "needs_reassignment") {
+    lines.push("Next: call reassign with this task ID (optionally naming an agent).");
+  }
   if (task.scopeViolations.length > 0) {
     lines.push(
       `Scope violations (kept off the task branch): ${task.scopeViolations.join(", ")}`,
@@ -470,6 +478,63 @@ server.registerTool(
   async ({ taskId }) => {
     const task = cancelTask(taskId, projectRoot);
     return toolReply(`Cancelled ${task.id}. Status: ${task.status}.`, taskId);
+  },
+);
+
+server.registerTool(
+  "usage",
+  {
+    description:
+      "Check remaining subscription allowance at a checkpoint (between major steps, not in a loop). Says keep working, HAND OFF (at or below 7% in the lowest window), or could not tell.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    inputSchema: {
+      agent: z
+        .string()
+        .trim()
+        .min(1)
+        .optional()
+        .describe("Configured agent to check; defaults to the calling agent"),
+    },
+  },
+  async ({ agent }) => {
+    const name = agent ?? currentAgent;
+    const adapter = loadAgentRegistry().agents[name];
+    const lines = [describeQuota(await checkQuota(name, adapter?.quota))];
+    if (currentTaskId && !agent) {
+      lines.push(`This task so far: ${describeUsage(getTask(currentTaskId, projectRoot))}`);
+    }
+    return toolReply(lines.join("\n"), currentTaskId);
+  },
+);
+
+server.registerTool(
+  "reassign",
+  {
+    description:
+      "Hand a task that needs reassignment (or failed) to another agent, which continues on the same task branch from a handoff note. Omit agent to let ShareLane pick one with allowance left.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      taskId: z.string().trim().min(1).describe("Task waiting in needs_reassignment, or a failed task"),
+      agent: z.string().trim().min(1).optional().describe("Agent to take over; defaults to automatic choice"),
+    },
+  },
+  async ({ taskId, agent }) => {
+    if (agent) getAgentAdapter(agent);
+    const task = await reassignTask(taskId, { projectRoot, agent });
+    return toolReply(
+      `Reassigned ${task.id} to ${task.agent}. Status: ${task.status}. It continues on ${task.branchName ?? "the same workspace"}.`,
+      taskId,
+    );
   },
 );
 

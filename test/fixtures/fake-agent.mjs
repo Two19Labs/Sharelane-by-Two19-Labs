@@ -25,6 +25,22 @@ if (delay > 0) {
 }
 if (!process.env.FAKE_EDIT_FIRST) await editFiles();
 
+// "QUOTA" mimics Codex running out of credits after doing some work.
+if (extraArgs.includes("QUOTA")) {
+  console.log(
+    JSON.stringify({
+      type: "error",
+      message: "Your workspace is out of credits. Ask your workspace owner to refill in order to continue.",
+    }),
+  );
+  console.error("Reading additional input from stdin...");
+  process.exit(1);
+}
+// "HANDOFF" mimics an agent that checked its usage and stopped deliberately.
+const handoffPrefix = extraArgs.includes("HANDOFF")
+  ? "HANDOFF: five-hour window at 5% remaining; progress saved, next step is the tests. "
+  : "";
+
 const environmentReport = process.env.FAKE_REPORT_SHARELANE_ENV
   ? `\nENV ${JSON.stringify({
       taskId: process.env.SHARELANE_TASK_ID,
@@ -43,7 +59,7 @@ if (format === "codex-jsonl") {
       type: "item.completed",
       item: {
         type: "agent_message",
-        text: `Codex heard: ${prompt}${environmentReport}${argsReport}`,
+        text: `${handoffPrefix}Codex heard: ${prompt}${environmentReport}${argsReport}`,
       },
     }),
   );
