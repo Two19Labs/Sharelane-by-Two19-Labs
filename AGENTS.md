@@ -16,7 +16,8 @@ These instructions apply to every agent working anywhere in this repository.
 ## Token-efficiency policy
 
 - Handle a simple task directly. Delegate only when another agent adds clear value through specialization, independent review, parallel work, or an explicit user request.
-- When usage is measurable, aim to keep orchestration overhead to roughly 25% or less of the fresh tokens a direct run would need. Treat this as a target until Phase 5 adds enforceable budgets.
+- When usage is measurable, aim to keep orchestration overhead to roughly 25% or less of the fresh tokens a direct run would need. This stays a target; for a hard limit, pass `budgetTokens` to `delegate`.
+- Check remaining allowance with ShareLane's `usage` tool at checkpoints (between major steps, never in a loop). At or below 7% remaining, stop, save, and hand off.
 - Report fresh input/output separately from cached context. Cached tokens are cheaper but still consume quota and should not hide an inefficient workflow.
 - Start from the context map and load only relevant chunks or document sections. Do not reread unchanged files, old work logs, full transcripts, or large command output unless needed.
 - Reuse the existing task session for follow-ups, avoid repeated status polling, and keep prompts, progress notes, handoffs, and final answers concise.

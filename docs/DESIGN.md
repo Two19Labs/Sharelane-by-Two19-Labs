@@ -1,13 +1,13 @@
 # ShareLane — Design
 
-> Status: **draft; Phases 0–4 implemented**. This file is the source of truth for what we're building and why; update it when a decision changes.
+> Status: **draft; Phases 0–5 implemented**. This file is the source of truth for what we're building and why; update it when a decision changes.
 
 ## 1. What ShareLane is
 
 A local, open-source hub that lets coding agents (Claude Code, Codex, Antigravity CLI, and any other agentic CLI) **share one project memory** and **delegate work to each other**, with no human relaying messages.
 
 - **Agent-neutral.** Any supported agent can be the orchestrator; any can be a worker. Adding an agent is a config entry, not new code.
-- **Subscription-only.** Agents run through their official CLIs, logged in with the user's own subscription. ShareLane never touches API keys or auth tokens.
+- **Subscription-only.** Agents run through their official CLIs, logged in with the user's own subscription. ShareLane never uses API keys or stores auth tokens. The one exception is an optional, read-only Claude usage check that reads Claude's sign-in token into memory to ask Anthropic how much allowance is left (decision 60).
 - **Per-project.** All state lives in the project (`.sharelane/`), so each repo has its own memory.
 
 ## 2. Primer: the two mechanisms everything is built on
@@ -201,7 +201,7 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 
 ### 6.4 Delegation (R1, R4, R6)
 
-- `delegate(agent, task, scope?)` → returns `task_id` immediately; the worker runs in the background. Without `scope`, the worker may change the whole project (the Phase 3 behavior).
+- `delegate(agent, task, scope?, budgetTokens?)` → returns `task_id` immediately; the worker runs in the background. Without `scope`, the worker may change the whole project (the Phase 3 behavior). `budgetTokens` caps fresh tokens across all of the task's runs (§6.6).
 - `status(task_id)`, `wait(task_id, timeout)`, `reply(task_id, message)` (resumes the worker's session), `cancel(task_id)`.
 - Every worker gets `SHARELANE_TASK_ID`, `SHARELANE_PARENT`, `SHARELANE_DEPTH` in its environment. The hub refuses a delegation when depth exceeds the limit (default 3) or when it would loop back on its own chain.
 - Output and the full transcript are captured for the dashboard.
@@ -223,14 +223,21 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 
 ### 6.6 Usage and handoffs (R8, R9)
 
-- Every run records: agent, task, start/end, exit status, tokens (when the CLI's JSON output includes them).
-- **Efficiency target:** when comparable usage is available, orchestration overhead should be roughly 25% or less of the fresh tokens a direct run would need. Show fresh input/output separately from cache reads/writes. This is a workflow target now; Phase 5 adds cumulative task accounting, warnings, and enforceable per-task budgets.
+- **Usage accounting.** Every run of a task (first run, each reply, each reassignment) is a row in `task_runs` with its agent, times, outcome, and tokens. Status and task files show totals of **fresh input**, **cached input**, and **output**; "fresh" is normalized per CLI so the numbers compare.
+- **Quota readers.** Each adapter names a built-in `quota` reader. Every reader answers the same way: windows with % remaining, and a verdict of **keep working**, **HAND OFF**, or **could not tell**.
+  - **Codex:** the newest rate-limit event in its local session logs (no network, no credentials).
+  - **Claude:** a status-line snapshot. ShareLane's status-line script saves Claude's `rate_limits` and then shows the user's own status line unchanged. When that snapshot is older than 15 minutes, ShareLane falls back to Anthropic's OAuth usage endpoint (token in memory only, at most one call per 5 minutes).
+  - **Antigravity:** no programmatic reader; its limit errors are the signal.
+- **The rule (the owner's, from Cospire):** at or below **7% remaining in the lowest window**, hand off. "Could not tell" is never "fine". A stale "plenty left" reading becomes "could not tell"; a stale "exhausted until the reset" reading still stands, because usage only rises until a reset.
+- **Checkpoints, not polling.** The worker checks before every run; agents call the `usage` tool between major steps. The Claude endpoint itself rate-limits, so constant polling would break it.
+- **Handoff and reassignment.**
+  1. Triggers: the pre-run check says hand off; a run dies with an allowance error (out of credits, usage or rate limit, 429); or the agent replies starting `HANDOFF:`.
+  2. ShareLane **saves the work to the task branch first**, then writes `.sharelane/tasks/<task>.handoff.md` (original request, later requests, progress notes, saved branch and files, last reply, reason).
+  3. It reassigns to the first configured agent that is outside the delegation chain, has not tried the task, and is not at its threshold. The new agent continues **on the same branch**, with the handoff as its prompt. At most two reassignments per task.
+  4. Otherwise the task waits as `needs_reassignment`, the caller gets a notice, and the `reassign` tool hands it over manually.
+- **Budgets.** `delegate(..., budgetTokens)` caps fresh tokens (new input plus output) across all runs. The caller is warned at 80%; once it is used up, no further run, reply, or reassignment starts. Usage arrives when a run ends, so budgets act between runs.
+- **Efficiency target.** Orchestration overhead should stay around 25% or less of a direct run. That baseline cannot be measured reliably, so it stays guidance; budgets are the enforceable control.
 - Avoid repeated status polling, duplicate reviews, rereading unchanged files, full historical logs, and oversized prompt/output dumps. These are the main preventable sources of multi-agent overhead.
-- **Quota:** agents can read their own plan usage (Manthan has done this in another project for both Codex and Claude). Reading quota goes through the adapter's `usage` field so each CLI's method is isolated and easy to fix if a vendor changes it. **TODO: reuse and verify the approach from that project.**
-- **Handoff policy:**
-  - Agents call `log_progress` after each meaningful step, so the task file is always a usable handoff even after a sudden stop.
-  - When quota crosses a threshold (e.g. 90%), the agent writes a full handoff (goal, done, in progress, next steps, gotchas) and ShareLane reassigns the task to another agent.
-  - If a worker dies with a rate-limit error, the hub marks the task `needs_reassignment` and offers it to the next agent with its task file.
 
 ### 6.7 Dashboard (R10)
 
@@ -257,7 +264,7 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 | 2 | Adapters + async delegation, Claude ↔ Codex both ways | Child processes, parsing JSON streams, task trees |
 | 3 | Worktrees + claims + duplicate detection + hooks | Concurrency, locking, git internals |
 | 4 | Scoped permissions (done) | Each CLI's sandbox model |
-| 5 | Usage, quota checks, handoffs, failover | Designing for failure |
+| 5 | Usage, quota checks, handoffs, failover (done) | Designing for failure |
 | 6 | Web dashboard | Reading live state, simple UI |
 | 7 | More adapters (Antigravity done early), `init`, docs, npm publish | Packaging and open-source launch |
 | 8 | VS Code extension | Extension API |
@@ -265,7 +272,7 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 
 ## 9. Open questions
 
-1. How exactly does each CLI expose plan quota? Pull from Manthan's other project.
+1. ~~How exactly does each CLI expose plan quota?~~ Resolved in Phase 5 from Manthan's Cospire checker: Claude via status line or usage endpoint, Codex via session logs, Antigravity not exposed (decisions 59–60).
 2. Prior art to check before launch (e.g. MCP Agent Mail, Zen/PAL MCP): what they already do, and how ShareLane differs.
 
 ## 10. Decisions
