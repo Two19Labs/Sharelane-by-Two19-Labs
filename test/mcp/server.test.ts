@@ -259,3 +259,40 @@ test("run_check lists approved checks, runs one in the workspace, and refuses ot
   assert.equal(refused.isError, true);
   assert.match(firstText(refused), /"deploy" is not an approved check[\s\S]*- hello/);
 });
+
+test("a delegated worker cannot approve its own checks by editing its worktree copy", async () => {
+  const owner = await mkdtemp(join(tmpdir(), "sharelane-owner-"));
+  const worker = await mkdtemp(join(tmpdir(), "sharelane-worker-"));
+  const write = async (root: string, checks: object) => {
+    await mkdir(join(root, ".sharelane"), { recursive: true });
+    await writeFile(join(root, ".sharelane", "checks.json"), JSON.stringify({ version: 1, checks }), "utf8");
+  };
+  await write(owner, { hello: { command: "node", args: ["-e", "console.log('ran in ' + process.cwd())"] } });
+  await write(worker, { evil: { command: "node", args: ["-e", "console.log('injected')"] } });
+  const workerClient = new Client({ name: "sharelane-worker-test", version: "0.1.0" });
+  await workerClient.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: [tsxPath, serverPath],
+      cwd: worker,
+      env: {
+        ...getDefaultEnvironment(),
+        SHARELANE_AGENT: "test-agent",
+        SHARELANE_PROJECT_ROOT: owner,
+        SHARELANE_WORKSPACE_ROOT: worker,
+      },
+    }),
+  );
+  try {
+    const injected = await workerClient.callTool({ name: "run_check", arguments: { name: "evil" } });
+    assert.equal(injected.isError, true);
+    assert.match(firstText(injected), /"evil" is not an approved check[\s\S]*- hello/);
+    const approved = await workerClient.callTool({ name: "run_check", arguments: { name: "hello" } });
+    assert.match(firstText(approved), /PASSED with exit code 0/);
+    assert.ok(firstText(approved).toLowerCase().includes(`ran in ${worker}`.toLowerCase()), "runs in the worker's own worktree");
+  } finally {
+    await workerClient.close();
+    await rm(owner, { recursive: true, force: true });
+    await rm(worker, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});

@@ -1466,8 +1466,18 @@ export async function handOffTask(
     const skipped = choice.skipped.length ? ` (skipped: ${choice.skipped.join("; ")})` : "";
     blocker = `no other agent is available${skipped}`;
   }
+  // Create the notice before the status change: anyone waiting on the task sees
+  // needs_reassignment as final, so the explanation must already exist by then.
+  const branch = task.branchName ? ` on ${task.branchName}` : "";
+  createNotice({
+    projectRoot,
+    recipientAgent: task.callerAgent,
+    taskId,
+    kind: "handoff",
+    message: `Task ${taskId} needs reassignment: ${reason}. ShareLane did not reassign it because ${blocker}. Its work is saved${branch}; see ${relativeTaskPath(handoffNotePath(taskId, projectRoot), projectRoot)} and use the reassign tool.`,
+  });
   const now = new Date().toISOString();
-  const parked = updateTask(
+  return updateTask(
     taskId,
     {
       status: "needs_reassignment",
@@ -1480,15 +1490,6 @@ export async function handOffTask(
     projectRoot,
     ["running"],
   ).task;
-  const branch = task.branchName ? ` on ${task.branchName}` : "";
-  createNotice({
-    projectRoot,
-    recipientAgent: task.callerAgent,
-    taskId,
-    kind: "handoff",
-    message: `Task ${taskId} needs reassignment: ${reason}. ShareLane did not reassign it because ${blocker}. Its work is saved${branch}; see ${relativeTaskPath(handoffNotePath(taskId, projectRoot), projectRoot)} and use the reassign tool.`,
-  });
-  return parked;
 }
 
 /** Store an agent's reply that did not complete the task (for example a HANDOFF). */

@@ -588,7 +588,9 @@ server.registerTool(
     },
   },
   async ({ name }) => {
-    const checks = loadChecks(workspaceRoot);
+    // The allow-list comes from the owner's project checkout, never from the
+    // worker's own worktree copy, which the worker could edit to add commands.
+    const checks = loadChecks(projectRoot);
     if (!name) return toolReply(describeChecks(checks), currentTaskId);
     const result = await runCheck({ name, workspaceRoot, checks });
     return toolReply(describeCheckResult(result), currentTaskId);

@@ -21,7 +21,7 @@ ShareLane gives all of them one shared notebook for the project and one place to
 - **Isolated branches.** Each delegated worker runs in its own Git worktree and returns a `sharelane/task-*` branch for you to review. Nothing is merged automatically.
 - **Collision protection.** Agents claim files before editing. Claims expire, overlapping claims are refused, and similar duplicate tasks get a warning. An edit-guard hook blocks unclaimed edits in Claude Code and Antigravity, and Git detection catches edits from anything else.
 - **Scoped tasks.** "Codex may only change `src/ui/**`." Enforced with each CLI's own permission controls where they exist, and otherwise by keeping out-of-scope changes off the branch.
-- **Usage, quota and handoff.** Token use is recorded for every run. Before each run, ShareLane checks the agent's remaining allowance. At 7% or less, or when it cannot tell, it saves the work, writes a handoff note and passes the task to another agent on the same branch.
+- **Usage, quota and handoff.** Token use is recorded for every run. Before each run, ShareLane checks the agent's remaining allowance. At 7% or less, or when a run fails because the agent ran out, it saves the work, writes a handoff note and passes the task to another agent on the same branch. ("Could not tell" is reported, never treated as "fine", but it does not block a run on its own.)
 - **Token budgets** per task.
 - **Approved checks (`run_check`).** Agents can ask ShareLane to run commands you approved, such as `npm test`, without getting a terminal.
 - **Live dashboard.** A local, read-only web page showing tasks, live output, claims, allowance meters, token use and the context map.
@@ -83,8 +83,8 @@ npx sharelane init
 
 `init` looks for Claude Code, Codex and Antigravity and connects each one it finds:
 
-- **Claude Code:** writes the project `.mcp.json` and the edit-guard hook. Claude asks you once to approve the project's MCP server.
-- **Codex:** keeps its MCP servers in your global config, so `init` prints a `codex mcp add …` command for you to run. Pass `--yes` to let `init` run it.
+- **Claude Code:** writes the project `.mcp.json`, the edit-guard hook and a usage status line (which keeps showing your own status line). Claude asks you once to approve the project's MCP server. **Commit `.mcp.json`**: delegated Claude workers read it from their task branch.
+- **Codex:** keeps its MCP servers in your global config, so `init` prints a `codex mcp add …` command for you to run (pass `--yes` to let `init` run it). It also prints one line to add to `~/.codex/config.toml` so Codex may call ShareLane's tools without asking: `default_tools_approval_mode = "approve"` under `[mcp_servers.sharelane]`.
 - **Antigravity:** writes `.agents/mcp_config.json` and its hook. Antigravity's permission rules are global only, so add one allow rule yourself: `mcp(sharelane/*)`.
 
 It also creates `.sharelane/` with a starter context map and `.sharelane/checks.json` (see [Configuration](#configuration)).
@@ -97,10 +97,10 @@ Open the agent you normally use and ask in plain words. For example, in Claude C
 
 Claude calls ShareLane's `delegate` tool and gets a task ID back right away. You can keep chatting. Ask "what's the status of that task?" or "wait for it", or send a follow-up with "reply to the task: also add a test". The same works from Codex or Antigravity: any of them can delegate to any other.
 
-You can also start a task from the terminal:
+To check that an agent is set up, you can also run it once from the terminal. This runs it directly in the current folder and waits for its answer; it is not a delegated task (no task branch, claims or handoff):
 
 ```sh
-npx sharelane run codex "add a dark-mode toggle to the settings page"
+npx sharelane run codex "say hello and list the ShareLane tools you can see"
 ```
 
 ### 4. Watch it
@@ -129,7 +129,7 @@ git merge sharelane/task-1a2b...   # only if you're happy with it
 
 **Scopes.** A scope is a list of project-relative paths or globs. ShareLane claims the scope for the task (refusing if someone else holds an overlapping claim), then translates it into each CLI's strongest control. For Claude Code, edits outside the scope are not pre-approved and so are denied. For Codex, the sandbox is rooted at the scope's folder. For Claude Code and Antigravity, the edit-guard hook also rejects out-of-scope edits. Finally, when the work is saved, any change outside the scope is written to a `.patch` file, restored, and kept off the task branch.
 
-**Handoffs.** Before every run, ShareLane asks how much allowance the agent has left. Codex is read from its local session logs. Claude is read from a status-line snapshot, with a fallback described under [Safety](#safety-model). Antigravity has no reader, so its limit errors are the signal. If the lowest window is at 7% or below, or the reading is "could not tell", or a run fails with an allowance error, or the worker replies `HANDOFF:`, ShareLane:
+**Handoffs.** Before every run, ShareLane asks how much allowance the agent has left. Codex is read from its local session logs. Claude is read from a status-line snapshot, with a fallback described under [Safety](#safety-model). Antigravity has no reader, so its limit errors are the signal. If the lowest window is at 7% or below, a run fails with an allowance error (out of credits, usage or rate limit), or the worker replies `HANDOFF:` after checking its own usage, ShareLane:
 
 1. commits the work so far to the task branch,
 2. writes `.sharelane/tasks/<task>.handoff.md` (the request, progress notes, files changed, last reply, reason),
@@ -137,7 +137,7 @@ git merge sharelane/task-1a2b...   # only if you're happy with it
 
 **Budgets.** `budgetTokens` caps fresh tokens (new input plus output) across all runs of a task, including replies and reassignments. You get a warning at 80%, and nothing new starts once the budget is used up. Token counts arrive when a run ends, so a single run can go over. The budget stops the next run, not the current one.
 
-**Approved checks (`run_check`).** Some workers have no terminal: scoped Claude runs, and Antigravity in headless mode. They can still run tests through `run_check`, which runs only commands listed in `.sharelane/checks.json`, in the task's worktree, and returns the output. Agents cannot add or change commands.
+**Approved checks (`run_check`).** Delegated Claude workers get no terminal, and Antigravity cannot run commands in headless mode. They can still run tests through `run_check`, which runs only commands listed in your project's `.sharelane/checks.json`, inside the task's worktree (so it sees the worker's uncommitted edits), with a time limit, and returns the last 8 KB of output. The list is always read from your main project checkout, so a worker cannot approve new commands by editing its own copy. **It is not a sandbox:** `npm test` runs the project's test code, which an agent may have written or changed.
 
 ## Safety model
 
@@ -146,11 +146,11 @@ git merge sharelane/task-1a2b...   # only if you're happy with it
 - **One exception, optional:** when the saved Claude status-line snapshot is more than 15 minutes old, ShareLane may read Claude Code's sign-in token into memory to make one read-only call to Anthropic's usage endpoint (at most once every 5 minutes). The token is never written anywhere. Turn this off with `SHARELANE_CLAUDE_USAGE_ENDPOINT=0`; Claude's quota then shows "could not tell" when the snapshot is stale.
 - **Nothing is merged for you.** Workers edit isolated worktrees and leave branches. You decide what reaches your main branch.
 - **Layered collision protection.** Expiring claims, the edit-guard hook (Claude Code and Antigravity), and Git detection with notices for edits the hook cannot see (Codex, shell commands).
-- **No terminal by default for constrained workers.** `run_check` runs only commands you listed.
+- **No terminal for constrained workers.** `run_check` runs only command lines you listed, taken from your own checkout. Those commands still execute project code (tests, scripts) that an agent may have edited, so it limits *which commands* run, not *what the code does*.
 
 ## Configuration
 
-**Agent adapters: `src/adapters/agents.yaml`.** Each agent is a config entry: the command and arguments to run and resume it, how to translate a scope into its flags, which quota reader to use, and where its MCP config lives. Adding a new agent CLI is mostly a new entry, plus a small output parser in `src/adapters/result.ts` if its output format is new.
+**Agent adapters: `src/adapters/agents.yaml`** (inside the installed package; point `SHARELANE_AGENTS_CONFIG` at your own copy to change it). Each agent is a config entry: the command and arguments to run and resume it, how to translate a scope into its flags, which quota reader to use, and where its MCP config lives. Adding a new agent CLI is mostly a new entry, plus a small output parser in `src/adapters/result.ts` if its output format is new.
 
 **Approved checks: `.sharelane/checks.json`.** `init` fills this from your `package.json` `test`, `typecheck` and `lint` scripts. Edit it to add, change or remove commands. Only commands listed here can be run through `run_check`.
 
@@ -159,6 +159,7 @@ git merge sharelane/task-1a2b...   # only if you're happy with it
 | Variable | Effect |
 |---|---|
 | `SHARELANE_CLAUDE_USAGE_ENDPOINT=0` | Never read Claude's token for the usage fallback |
+| `SHARELANE_AGENTS_CONFIG=<path>` | Use your own adapters file instead of the bundled `agents.yaml` |
 
 ## Known limitations
 

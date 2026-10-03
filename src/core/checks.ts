@@ -41,7 +41,13 @@ export interface CheckResult {
   truncated: boolean;
 }
 
-/** Read and validate .sharelane/checks.json; a missing file means no approved checks. */
+/**
+ * Read and validate .sharelane/checks.json; a missing file means no approved checks.
+ * Callers pass the owner's project root (not a delegated worker's worktree), so a
+ * worker cannot approve its own commands by editing its copy of the file. Note that
+ * a check such as `npm test` still runs project code the agent may have written:
+ * run_check limits which command lines run, it is not a sandbox.
+ */
 export function loadChecks(root = process.cwd()): Record<string, CheckConfig> {
   const path = join(root, CHECKS_PATH);
   if (!existsSync(path)) return {};

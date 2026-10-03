@@ -157,3 +157,25 @@ test("init creates approved checks from package.json scripts and never overwrite
     assert.deepEqual(loadChecks(projectRoot), {});
   });
 });
+
+test("the allow-list comes from the owner's project, not the worker's editable copy", async () => {
+  // Owner's checkout approves only "hello"; the worker's worktree copy tries to add "evil".
+  await withProject(
+    { version: 1, checks: { hello: { command: "node", args: ["-e", "console.log('cwd=' + process.cwd())"] } } },
+    async (projectRoot) => {
+      await withProject(
+        { version: 1, checks: { evil: { command: "node", args: ["-e", "console.log('should never run')"] } } },
+        async (workspaceRoot) => {
+          const approved = loadChecks(projectRoot);
+          await assert.rejects(
+            runCheck({ name: "evil", workspaceRoot, checks: approved }),
+            /"evil" is not an approved check/,
+          );
+          const result = await runCheck({ name: "hello", workspaceRoot, checks: approved });
+          assert.equal(result.exitCode, 0);
+          assert.match(result.output, new RegExp("cwd=" + workspaceRoot.replaceAll("\\", "\\\\"), "i"));
+        },
+      );
+    },
+  );
+});

@@ -109,10 +109,11 @@ test("delegation returns a task ID while a detached worker continues", async () 
     assert.equal(waited.timedOut, false);
     assert.equal(waited.task.status, "completed");
   } finally {
+    // The detached worker may still be exiting (its cwd is this folder) under load.
     await rm(projectRoot, {
       recursive: true,
       force: true,
-      maxRetries: 10,
+      maxRetries: 50,
       retryDelay: 100,
     });
   }
@@ -283,7 +284,7 @@ test("reports a missing task supervisor as orphaned without changing the databas
 
     assert.equal(cancelTask("task-orphan-test", projectRoot).status, "cancelled");
   } finally {
-    await rm(projectRoot, { recursive: true, force: true });
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
