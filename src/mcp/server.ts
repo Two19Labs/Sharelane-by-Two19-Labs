@@ -17,6 +17,7 @@ import { takePendingNotices } from "../core/notices.js";
 import { describeScope } from "../core/scope.js";
 import { checkQuota, describeQuota } from "../core/quota.js";
 import { getAgentAdapter, loadAgentRegistry } from "../adapters/adapter.js";
+import { describeCheckResult, describeChecks, loadChecks, runCheck } from "../core/checks.js";
 import {
   cancelTask,
   delegateTask,
@@ -568,6 +569,29 @@ server.registerTool(
     return toolReply(
       `Logged progress for "${entry.task}" as ${entry.agent} at ${entry.createdAt}.`,
     );
+  },
+);
+
+server.registerTool(
+  "run_check",
+  {
+    description:
+      "Run one owner-approved project check (tests, typecheck, lint) from .sharelane/checks.json in your workspace, including uncommitted edits. Omit name to list the approved checks. Use this instead of terminal commands for those checks.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      name: z.string().trim().min(1).optional().describe("Approved check name, such as test; omit to list them"),
+    },
+  },
+  async ({ name }) => {
+    const checks = loadChecks(workspaceRoot);
+    if (!name) return toolReply(describeChecks(checks), currentTaskId);
+    const result = await runCheck({ name, workspaceRoot, checks });
+    return toolReply(describeCheckResult(result), currentTaskId);
   },
 );
 

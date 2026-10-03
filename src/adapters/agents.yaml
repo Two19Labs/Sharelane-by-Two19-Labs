@@ -15,7 +15,7 @@ agents:
         - .mcp.json
         - --strict-mcp-config
         - --allowedTools
-        - mcp__sharelane__context_map,mcp__sharelane__read_chunk,mcp__sharelane__update_chunk,mcp__sharelane__search,mcp__sharelane__claim,mcp__sharelane__heartbeat,mcp__sharelane__release,mcp__sharelane__log_progress,mcp__sharelane__delegate,mcp__sharelane__status,mcp__sharelane__wait,mcp__sharelane__reply,mcp__sharelane__cancel
+        - mcp__sharelane__context_map,mcp__sharelane__read_chunk,mcp__sharelane__update_chunk,mcp__sharelane__search,mcp__sharelane__claim,mcp__sharelane__heartbeat,mcp__sharelane__release,mcp__sharelane__log_progress,mcp__sharelane__delegate,mcp__sharelane__status,mcp__sharelane__wait,mcp__sharelane__reply,mcp__sharelane__cancel,mcp__sharelane__usage,mcp__sharelane__run_check
     resume:
       args:
         - -p
@@ -29,7 +29,7 @@ agents:
         - .mcp.json
         - --strict-mcp-config
         - --allowedTools
-        - mcp__sharelane__context_map,mcp__sharelane__read_chunk,mcp__sharelane__update_chunk,mcp__sharelane__search,mcp__sharelane__claim,mcp__sharelane__heartbeat,mcp__sharelane__release,mcp__sharelane__log_progress,mcp__sharelane__delegate,mcp__sharelane__status,mcp__sharelane__wait,mcp__sharelane__reply,mcp__sharelane__cancel
+        - mcp__sharelane__context_map,mcp__sharelane__read_chunk,mcp__sharelane__update_chunk,mcp__sharelane__search,mcp__sharelane__claim,mcp__sharelane__heartbeat,mcp__sharelane__release,mcp__sharelane__log_progress,mcp__sharelane__delegate,mcp__sharelane__status,mcp__sharelane__wait,mcp__sharelane__reply,mcp__sharelane__cancel,mcp__sharelane__usage,mcp__sharelane__run_check
     # Scoped tasks switch to dontAsk: tools not pre-approved are denied, and
     # built-in file edits are pre-approved only inside the delegated scope.
     scope:
@@ -114,7 +114,7 @@ agents:
     # No native per-path restriction: scope is enforced by claims, the
     # PreToolUse edit guard in .agents/hooks.json, and Git.
     workerNotes:
-      - "Terminal commands are not available in this headless run, and a refused command ends your turn immediately. Do not run git, tests, or any other command; use only your file view/edit tools and ShareLane tools, and say which checks you could not run."
+      - "Terminal commands are not available in this headless run, and a refused command ends your turn immediately. Do not run git, tests, or any other terminal command; use only your file view/edit tools and ShareLane tools. Run approved checks (tests, typecheck, lint) with ShareLane's run_check tool (call it without a name to list them), and say which checks you could not run."
     quota: none
     output: antigravity-json
     instructionsFile: AGENTS.md

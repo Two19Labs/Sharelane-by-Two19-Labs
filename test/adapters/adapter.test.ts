@@ -17,6 +17,15 @@ test("loads Claude, Codex, and Antigravity adapters from YAML", () => {
   assert.equal(registry.agents.codex?.output, "codex-jsonl");
 });
 
+test("Claude workers may call usage and run_check on both run and resume", () => {
+  const claude = loadAgentRegistry(defaultAgentsPath).agents.claude!;
+  for (const args of [claude.run.args, claude.resume.args]) {
+    const allowed = args[args.indexOf("--allowedTools") + 1]!.split(",");
+    assert(allowed.includes("mcp__sharelane__usage"));
+    assert(allowed.includes("mcp__sharelane__run_check"));
+  }
+});
+
 test("builds run and resume commands without shell parsing", () => {
   const registry = loadAgentRegistry(defaultAgentsPath);
   const dangerousLookingPrompt = 'Calculate "2 & 3"; Remove-Item -Recurse .';

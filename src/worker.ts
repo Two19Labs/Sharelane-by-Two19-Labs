@@ -65,6 +65,7 @@ function delegatedPrompt(
     "- Before editing, call ShareLane's claim tool with the exact files or narrow path patterns you will change and a short intent. Overlapping claims are refused.",
     "- Keep claims alive with heartbeat during long work and release them when finished. ShareLane also refreshes task claims automatically.",
     "- You are working in an isolated Git worktree. ShareLane will save changes on the task branch and hand the commit back; do not merge it yourself.",
+    "- For approved project checks (tests, typecheck, lint), use ShareLane's run_check tool instead of terminal commands; call it without a name to list them. It runs in your worktree and sees your uncommitted edits.",
     ...scopeInstructions(scope),
     ...workerNotes.map((note) => `- ${note}`),
     "- Update relevant shared context when your work changes what future agents need to know.",

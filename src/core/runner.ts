@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { createWriteStream, existsSync, readFileSync } from "node:fs";
+import { createWriteStream, existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname, extname, join, relative } from "node:path";
+import { delimiter, dirname, extname, join, relative } from "node:path";
 import { spawn } from "node:child_process";
 import {
   buildAgentCommand,
@@ -74,13 +74,39 @@ export function resolveAgentExecutable(
     }
     const launcher = join(directory, `${command}.cmd`);
     if (existsSync(launcher)) {
-      const script = /"%dp0%\\([^"]+\.[cm]?js)"/.exec(readFileSync(launcher, "utf8"))?.[1];
+      const source = readFileSync(launcher, "utf8");
+      // npm's cmd-shim launchers use "%dp0%\x.js"; npm.cmd and npx.cmd themselves
+      // set *_CLI_JS=%~dp0\node_modules\npm\bin\<npm|npx>-cli.js.
+      const script =
+        /"%dp0%\\([^"]+\.[cm]?js)"/.exec(source)?.[1] ??
+        /_CLI_JS=%~dp0\\+([^"%]+\.[cm]?js)"/.exec(source)?.[1];
       if (script && existsSync(join(directory, script))) {
         return { command: process.execPath, prefixArgs: [join(directory, script)] };
       }
     }
   }
   return unchanged;
+}
+
+/** Find a command on PATH the way a shell would; undefined when it is not installed. */
+export function findOnPath(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
+  const directories = (pathKey ? env[pathKey] ?? "" : "").split(delimiter).filter(Boolean);
+  const extensions = process.platform === "win32" ? [".com", ".exe", ".cmd", ".bat"] : [""];
+  for (const directory of directories) {
+    for (const extension of extensions) {
+      const candidate = join(directory, `${command}${extension}`);
+      try {
+        if (statSync(candidate).isFile()) return candidate;
+      } catch {
+        // Not in this folder.
+      }
+    }
+  }
+  return undefined;
 }
 
 export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
