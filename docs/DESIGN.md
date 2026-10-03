@@ -1,6 +1,6 @@
 # ShareLane — Design
 
-> Status: **draft; Phases 0–5 implemented**. This file is the source of truth for what we're building and why; update it when a decision changes.
+> Status: **draft; Phases 0–6 implemented**. This file is the source of truth for what we're building and why; update it when a decision changes.
 
 ## 1. What ShareLane is
 
@@ -241,8 +241,16 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 
 ### 6.7 Dashboard (R10)
 
-- **v1:** local web page (`sharelane dashboard`) reading the SQLite db: agents, active tasks, claims, usage, context map graph, and live worker output.
-- **Chats:** worker transcripts are captured by the hub. Interactive chats are read from each CLI's transcript folder (adapter `transcripts` field).
+- **v1 (built in Phase 6):** `npm run sharelane -- dashboard [--port 4317] [--open]` serves a local, read-only page from Node's built-in `http` module. It shows:
+  - headline tiles: active tasks, tasks waiting for handoff, active claims, fresh tokens;
+  - agent cards with an allowance meter per usage window and the 7% handoff marker;
+  - a task table (status, request, agent path, scope, tokens and budget) with a detail panel: facts, **live output**, the conversation, and any handoff note;
+  - claims with expiry countdowns, notices, and progress notes;
+  - tokens by agent (a stacked bar with a table view);
+  - a context-map graph showing which chunk covers which files, and which chunks are stale.
+- **Safety:** it listens on `127.0.0.1` only and answers only `localhost` Host headers (stopping DNS rebinding). It is GET-only, uses a strict self-only Content-Security-Policy, and builds the page from text nodes, so task text cannot inject code. Looking at it never delivers notices or changes anything, and it never uses Claude's token-based usage endpoint.
+- **Live updates:** the page polls every 2 seconds and pauses while hidden; live output is read by byte offset from the task's own log. A link such as `/#task=<id>` opens a task directly.
+- **Chats:** worker transcripts are captured by the hub. Reading interactive chats from each CLI's transcript folder (adapter `transcripts` field) is still to come.
 - **Later:** a VS Code extension with the same views in a side panel.
 - **Later, fun layer:** an animated "office" view. Each agent is a little character at a desk; you can watch them pick up tickets, walk to files they've claimed, pass handoff notes, and show a speech bubble with what they're currently doing. Same live data as the dashboard, just visual. Also good for demos and content.
 
@@ -265,7 +273,7 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 | 3 | Worktrees + claims + duplicate detection + hooks | Concurrency, locking, git internals |
 | 4 | Scoped permissions (done) | Each CLI's sandbox model |
 | 5 | Usage, quota checks, handoffs, failover (done) | Designing for failure |
-| 6 | Web dashboard | Reading live state, simple UI |
+| 6 | Web dashboard (done) | Reading live state, simple UI |
 | 7 | More adapters (Antigravity done early), `init`, docs, npm publish | Packaging and open-source launch |
 | 8 | VS Code extension | Extension API |
 | 9 | Animated office view (agents as characters) | Animation driven by live data |
