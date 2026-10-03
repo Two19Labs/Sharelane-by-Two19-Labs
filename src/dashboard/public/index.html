@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShareLane dashboard</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>ShareLane</h1>
+        <p id="project" class="muted">Loading…</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="live" class="live" role="status" aria-live="polite">Connecting…</span>
+      <button id="theme" class="ghost" type="button">Theme: system</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="kpis" class="kpis" aria-label="Summary"></section>
+
+    <section class="panel" aria-labelledby="agents-heading">
+      <div class="panel-head">
+        <h2 id="agents-heading">Agents</h2>
+        <p class="muted">Allowance left in each usage window. ShareLane hands off at or below the marker (7%).</p>
+      </div>
+      <div id="agents" class="agents"></div>
+    </section>
+
+    <div class="grid">
+      <section class="panel" aria-labelledby="tasks-heading">
+        <div class="panel-head">
+          <h2 id="tasks-heading">Tasks</h2>
+          <div id="filters" class="filters" role="group" aria-label="Show tasks"></div>
+        </div>
+        <div id="tasks" class="table-wrap"></div>
+        <div id="detail"></div>
+      </section>
+      <aside class="side">
+        <section class="panel" aria-labelledby="claims-heading">
+          <div class="panel-head"><h2 id="claims-heading">Claims</h2><span id="claims-count" class="muted"></span></div>
+          <ul id="claims" class="list scroll"></ul>
+        </section>
+        <section class="panel" aria-labelledby="notices-heading">
+          <div class="panel-head"><h2 id="notices-heading">Notices</h2></div>
+          <ul id="notices" class="list scroll"></ul>
+        </section>
+        <section class="panel" aria-labelledby="progress-heading">
+          <div class="panel-head"><h2 id="progress-heading">Progress notes</h2></div>
+          <ul id="progress" class="list scroll"></ul>
+        </section>
+      </aside>
+    </div>
+
+    <div class="grid two">
+      <section class="panel" aria-labelledby="usage-heading">
+        <div class="panel-head">
+          <h2 id="usage-heading">Tokens by agent</h2>
+          <button id="usage-toggle" class="ghost" type="button" aria-pressed="false">Show table</button>
+        </div>
+        <div id="usage"></div>
+      </section>
+      <section class="panel map" aria-labelledby="map-heading">
+        <div class="panel-head">
+          <h2 id="map-heading">Context map</h2>
+          <p class="muted">Which shared-context chunk covers which files.</p>
+        </div>
+        <div id="map"></div>
+      </section>
+    </div>
+  </main>
+  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

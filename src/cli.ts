@@ -11,6 +11,8 @@ import {
   installClaudeUsageStatusLine,
 } from "./core/hooks.js";
 import { runAgent } from "./core/runner.js";
+import { spawn } from "node:child_process";
+import { DEFAULT_DASHBOARD_PORT, startDashboard } from "./dashboard/server.js";
 
 function usage(): string {
   return [
@@ -19,15 +21,48 @@ function usage(): string {
     "Usage:",
     "  npm run sharelane -- init",
     "  npm run sharelane -- run <agent> <prompt>",
+    "  npm run sharelane -- dashboard [--port <number>] [--open]",
     "",
     "Commands:",
     "  init   Create the shared context map, starter chunks, database, and agent instructions.",
     "  run    Ask one configured agent to do a task and wait for its answer.",
+    `  dashboard  Serve a live, read-only dashboard on this computer (default port ${DEFAULT_DASHBOARD_PORT}).`,
   ].join("\n");
+}
+
+/** Open a URL in the default browser without involving a shell. */
+function openInBrowser(url: string): void {
+  const [command, args] =
+    process.platform === "win32"
+      ? ["explorer.exe", [url]]
+      : process.platform === "darwin"
+        ? ["open", [url]]
+        : ["xdg-open", [url]];
+  const child = spawn(command, args, { detached: true, stdio: "ignore", shell: false });
+  child.on("error", () => console.log(`Open ${url} in your browser.`));
+  child.unref();
 }
 
 async function run(): Promise<void> {
   const [command, ...extra] = process.argv.slice(2);
+  if (command === "dashboard") {
+    const portIndex = extra.indexOf("--port");
+    const port = portIndex >= 0 ? Number(extra[portIndex + 1]) : DEFAULT_DASHBOARD_PORT;
+    if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+      throw new Error("--port needs a number between 0 and 65535.");
+    }
+    const dashboard = await startDashboard({ projectRoot: process.cwd(), port });
+    console.log(`ShareLane dashboard: ${dashboard.url}`);
+    console.log("Read-only and only reachable from this computer. Press Ctrl+C to stop.");
+    if (extra.includes("--open")) openInBrowser(dashboard.url);
+    await new Promise<void>((resolve) => {
+      process.once("SIGINT", () => resolve());
+      process.once("SIGTERM", () => resolve());
+    });
+    await dashboard.close();
+    return;
+  }
+
   if (command === "run") {
     const [agent, ...promptParts] = extra;
     const prompt = promptParts.join(" ").trim();

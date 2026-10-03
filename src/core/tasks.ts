@@ -309,11 +309,35 @@ function writeTaskFile(task: ShareLaneTask, projectRoot: string): void {
   renameSync(temporary, task.taskFile);
 }
 
-function usageTotals(database: DatabaseSync, taskId: string): TaskUsageTotals {
+/**
+ * Fresh input for usage recorded before parsers reported it (pre-v5 tasks),
+ * using the same per-CLI rules as the parsers.
+ */
+export function freshInputOf(agent: string, usage: AgentUsage): number {
+  if (usage.freshInputTokens !== undefined) return usage.freshInputTokens;
+  const input = usage.inputTokens ?? 0;
+  if (agent === "claude") return input + (usage.cacheWriteInputTokens ?? 0);
+  if (agent === "codex") return Math.max(0, input - (usage.cachedInputTokens ?? 0));
+  return input;
+}
+
+function usageTotals(
+  database: DatabaseSync,
+  taskId: string,
+  legacy?: { agent: string; usage?: AgentUsage },
+): TaskUsageTotals {
   const totals = emptyTotals();
   const rows = database
     .prepare("SELECT usage_json FROM task_runs WHERE task_id = ? ORDER BY id")
     .all(taskId) as unknown as Array<{ usage_json: string | null }>;
+  // Tasks from before the run log kept only their last run's usage; count it as one run.
+  if (rows.length === 0 && legacy?.usage && Object.keys(legacy.usage).length > 0) {
+    totals.runs = 1;
+    totals.freshInputTokens = freshInputOf(legacy.agent, legacy.usage);
+    totals.cachedInputTokens = legacy.usage.cachedInputTokens ?? 0;
+    totals.outputTokens = legacy.usage.outputTokens ?? 0;
+    return totals;
+  }
   for (const row of rows) {
     totals.runs += 1;
     const usage = row.usage_json ? (JSON.parse(row.usage_json) as AgentUsage) : undefined;
@@ -400,7 +424,11 @@ export function getTask(
       | TaskRow
       | undefined;
     if (!row) throw new Error(`Unknown task "${taskId}".`);
-    const task = { ...fromRow(row), totalUsage: usageTotals(database, taskId) };
+    const base = fromRow(row);
+    const task = {
+      ...base,
+      totalUsage: usageTotals(database, taskId, { agent: base.agent, usage: base.usage }),
+    };
     if (
       (task.status === "queued" || task.status === "running") &&
       task.workerPid !== undefined &&
