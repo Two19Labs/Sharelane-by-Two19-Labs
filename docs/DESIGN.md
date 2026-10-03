@@ -1,6 +1,6 @@
 # ShareLane — Design
 
-> Status: **draft; Phases 0–6 implemented**. This file is the source of truth for what we're building and why; update it when a decision changes.
+> Status: **draft; Phases 0–6 implemented; Phase 7 code complete (publishing is the owner's step)**. This file is the source of truth for what we're building and why; update it when a decision changes.
 
 ## 1. What ShareLane is
 
@@ -42,8 +42,8 @@ Each agent is told about the server once, in its own config:
 
 | Agent | Where MCP servers are configured |
 |---|---|
-| Claude Code (CLI + VS Code extension) | `.mcp.json` in the project, or `claude mcp add` |
-| Codex (CLI + VS Code extension) | `~/.codex/config.toml` → `[mcp_servers.*]` |
+| Claude Code (CLI + VS Code extension) | `.mcp.json` in the project (written by `sharelane init`), or `claude mcp add` |
+| Codex (CLI + VS Code extension) | `~/.codex/config.toml` → `[mcp_servers.*]` (global; `init` prints the `codex mcp add` command, or runs it with `--yes`) |
 | Antigravity CLI (`agy`, Google's successor to Gemini CLI) | `.agents/mcp_config.json` in the project, plus a global `mcp(sharelane/*)` allow rule |
 
 Other agents with MCP client support include Cursor, Cline, GitHub Copilot agent mode, OpenCode and Goose. Not every agent has it, so ShareLane also ships a plain **CLI** (`sharelane recall "auth flow"`) that does the same things. Any agent that can run shell commands can use it. MCP is the preferred interface; the CLI is the universal fallback.
@@ -180,7 +180,11 @@ agents:
 
 Each CLI's output format needs one small parser in `src/adapters/result.ts`; everything else is configuration. On Windows, npm-installed CLIs are `.cmd` launchers, which ShareLane resolves to "node + script" so agents still start without a shell.
 
-`sharelane init` writes each agent's MCP config and instruction-file pointer for the project.
+`sharelane init` detects which agent CLIs are installed and wires each one: the MCP config (launched as `node <installed bin> mcp`, because MCP clients start servers without a shell), the edit guard where the CLI has hooks, Claude's usage status line, the instruction-file block, and `.sharelane/checks.json`. It never edits a global configuration (Codex) unless the user passes `--yes`, and it prints what is left for the user to do.
+
+### 6.1a Approved checks (`run_check`)
+
+`.sharelane/checks.json` is the owner's allow-list of exact commands (prefilled from package.json `test`, `typecheck`, `lint`). The `run_check` tool lists them or runs one, without a shell, inside the caller's workspace (a delegated worker's worktree, so it sees uncommitted edits), with a timeout that stops the whole process tree and an 8 KB output tail. The list is read from the project checkout, never from a worker's editable copy. It limits *which command lines* run; the commands still execute project code an agent may have written, so it is not a sandbox.
 
 ### 6.2 Hub process model
 
@@ -261,7 +265,8 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 | Language | TypeScript on Node | Official MCP SDK is best supported in TS; users install with `npx sharelane init`; the agent CLIs' users already have Node |
 | Storage | SQLite (WAL) + markdown files | SQLite for concurrent state; markdown so context is readable, diffable, and committed to git |
 | Search | SQLite FTS5 | No API keys, no extra services |
-| Package name | `sharelane` | Free on npm as of 2026-09-26 |
+| Package name | `sharelane` | Free on npm as of 2026-09-26, rechecked 2026-10-03 |
+| Packaging | TypeScript source run through tsx at runtime; `bin/sharelane.mjs`; MIT license | No build step; paths resolve from the installed package (decision 68) |
 
 ## 8. Build phases
 
@@ -274,7 +279,7 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 | 4 | Scoped permissions (done) | Each CLI's sandbox model |
 | 5 | Usage, quota checks, handoffs, failover (done) | Designing for failure |
 | 6 | Web dashboard (done) | Reading live state, simple UI |
-| 7 | More adapters (Antigravity done early), `init`, docs, npm publish | Packaging and open-source launch |
+| 7 | More adapters (Antigravity done early), `init`, `run_check`, packaging, docs (code done; publish and video pending) | Packaging and open-source launch |
 | 8 | VS Code extension | Extension API |
 | 9 | Animated office view (agents as characters) | Animation driven by live data |
 
