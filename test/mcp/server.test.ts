@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -85,6 +85,7 @@ test("lists context tools, collision controls, and Phase 5 handoff tools", async
       "usage",
       "reassign",
       "log_progress",
+      "run_check",
     ],
   );
 
@@ -234,4 +235,27 @@ test("the usage tool reports allowance and never treats 'could not tell' as fine
   const reassign = await client.callTool({ name: "reassign", arguments: { taskId: "task-missing" } });
   assert.equal(reassign.isError, true);
   assert.match(firstText(reassign), /Unknown task "task-missing"/);
+});
+
+test("run_check lists approved checks, runs one in the workspace, and refuses others", async () => {
+  await mkdir(join(projectRoot, ".sharelane"), { recursive: true });
+  await writeFile(
+    join(projectRoot, ".sharelane", "checks.json"),
+    JSON.stringify({
+      version: 1,
+      checks: { hello: { command: "node", args: ["-e", "console.log('checked ' + process.cwd())"] } },
+    }),
+    "utf8",
+  );
+  const listed = await client.callTool({ name: "run_check", arguments: {} });
+  assert.match(firstText(listed), /Approved checks[\s\S]*- hello: node -e/);
+
+  const ran = await client.callTool({ name: "run_check", arguments: { name: "hello" } });
+  assert.notEqual(ran.isError, true);
+  assert.match(firstText(ran), /Check hello .*PASSED with exit code 0/);
+  assert.match(firstText(ran), /checked /);
+
+  const refused = await client.callTool({ name: "run_check", arguments: { name: "deploy" } });
+  assert.equal(refused.isError, true);
+  assert.match(firstText(refused), /"deploy" is not an approved check[\s\S]*- hello/);
 });

@@ -1,16 +1,8 @@
 #!/usr/bin/env node
 
-import { initializeContext, relativeContextPath } from "./core/context.js";
-import {
-  installAgentInstructions,
-  installRuntimeIgnores,
-} from "./core/instructions.js";
-import {
-  installAntigravityIntegration,
-  installClaudeClaimHook,
-  installClaudeUsageStatusLine,
-} from "./core/hooks.js";
+import { relativeContextPath } from "./core/context.js";
 import { runAgent } from "./core/runner.js";
+import { setupProject } from "./core/setup.js";
 import { spawn } from "node:child_process";
 import { DEFAULT_DASHBOARD_PORT, startDashboard } from "./dashboard/server.js";
 
@@ -19,14 +11,17 @@ function usage(): string {
     "ShareLane",
     "",
     "Usage:",
-    "  npm run sharelane -- init",
-    "  npm run sharelane -- run <agent> <prompt>",
-    "  npm run sharelane -- dashboard [--port <number>] [--open]",
+    "  sharelane init [--yes]",
+    "  sharelane mcp",
+    "  sharelane dashboard [--port <n>] [--open]",
+    "  sharelane run <agent> <prompt>",
     "",
     "Commands:",
-    "  init   Create the shared context map, starter chunks, database, and agent instructions.",
-    "  run    Ask one configured agent to do a task and wait for its answer.",
+    "  init       Set up shared context, approved checks, and every agent CLI found on PATH.",
+    "             --yes also runs commands that change global agent settings (Codex).",
+    "  mcp        Start the ShareLane MCP server on stdio (agent CLIs launch this).",
     `  dashboard  Serve a live, read-only dashboard on this computer (default port ${DEFAULT_DASHBOARD_PORT}).`,
+    "  run        Ask one configured agent to do a task and wait for its answer.",
   ].join("\n");
 }
 
@@ -45,6 +40,12 @@ function openInBrowser(url: string): void {
 
 async function run(): Promise<void> {
   const [command, ...extra] = process.argv.slice(2);
+  if (command === "mcp" && extra.length === 0) {
+    // The server module connects to stdio when loaded; stdout belongs to MCP.
+    await import("./mcp/server.js");
+    return;
+  }
+
   if (command === "dashboard") {
     const portIndex = extra.indexOf("--port");
     const port = portIndex >= 0 ? Number(extra[portIndex + 1]) : DEFAULT_DASHBOARD_PORT;
@@ -76,39 +77,15 @@ async function run(): Promise<void> {
     return;
   }
 
-  if (command !== "init" || extra.length > 0) {
+  const yes = extra.length === 1 && (extra[0] === "--yes" || extra[0] === "-y");
+  if (command !== "init" || (extra.length > 0 && !yes)) {
     console.log(usage());
-    process.exitCode = command ? 1 : 0;
+    process.exitCode = command && command !== "help" && command !== "--help" ? 1 : 0;
     return;
   }
 
-  const projectRoot = process.cwd();
-  const result = initializeContext(projectRoot);
-  installAgentInstructions(projectRoot);
-  installRuntimeIgnores(projectRoot);
-  installClaudeClaimHook(projectRoot);
-  installAntigravityIntegration(projectRoot);
-  const statusLineInstalled = installClaudeUsageStatusLine(projectRoot);
-  // Rebuild once more in case an existing chunk covers an instruction file.
-  initializeContext(projectRoot);
-
-  console.log("ShareLane context is ready.");
-  console.log(`Map: ${relativeContextPath(result.mapPath, projectRoot)}`);
-  console.log(`Database: ${relativeContextPath(result.databasePath, projectRoot)}`);
-  console.log(
-    result.createdChunks.length > 0
-      ? `Created chunks: ${result.createdChunks.join(", ")}`
-      : "Starter chunks already existed; none were overwritten.",
-  );
-  console.log("Updated agent instructions and local-runtime Git ignores.");
-  console.log("Installed Claude edit guard: .claude/settings.json");
-  console.log(
-    statusLineInstalled
-      ? "Installed Claude usage status line (chains to your own): .claude/settings.json"
-      : "Left your project status line alone; Claude quota will use the usage-endpoint fallback.",
-  );
-  console.log("Connected Antigravity CLI and its edit guard: .agents/mcp_config.json, .agents/hooks.json");
-  console.log("Antigravity also needs permissions.allow \"mcp(sharelane/*)\" in ~/.gemini/antigravity-cli/settings.json.");
+  const report = setupProject({ projectRoot: process.cwd(), yes });
+  console.log(report.lines.join("\n"));
 }
 
 try {

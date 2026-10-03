@@ -111,11 +111,16 @@ interface ClaudeSettings {
   [key: string]: unknown;
 }
 
-export function installClaudeClaimHook(projectRoot = process.cwd()): void {
+/** Write the shared edit-guard script that both Claude and Antigravity hooks run. */
+export function installClaimGuardScript(projectRoot = process.cwd()): void {
   const hookPath = join(projectRoot, ".claude", "hooks", HOOK_NAME);
-  const settingsPath = join(projectRoot, ".claude", "settings.json");
   mkdirSync(dirname(hookPath), { recursive: true });
   writeFileSync(hookPath, HOOK_SOURCE, "utf8");
+}
+
+export function installClaudeClaimHook(projectRoot = process.cwd()): void {
+  const settingsPath = join(projectRoot, ".claude", "settings.json");
+  installClaimGuardScript(projectRoot);
 
   let settings: ClaudeSettings = {};
   if (existsSync(settingsPath)) {
@@ -139,6 +144,31 @@ export function installClaudeClaimHook(projectRoot = process.cwd()): void {
   writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
 }
 
+/** How an MCP client starts the ShareLane server (no shell is involved). */
+export interface McpLauncher {
+  command: string;
+  args: string[];
+}
+
+/**
+ * Register ShareLane in the project's .mcp.json for Claude Code, keeping any
+ * other servers and settings already there.
+ */
+export function installClaudeMcpConfig(projectRoot: string, launcher: McpLauncher): void {
+  const path = join(projectRoot, ".mcp.json");
+  const config = readJson(path);
+  config.mcpServers = {
+    ...(config.mcpServers as Record<string, unknown> | undefined),
+    sharelane: {
+      type: "stdio",
+      command: launcher.command,
+      args: launcher.args,
+      env: { SHARELANE_AGENT: "claude" },
+    },
+  };
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
 function readJson(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
   const source = readFileSync(path, "utf8").trim();
@@ -148,21 +178,25 @@ function readJson(path: string): Record<string, unknown> {
 /**
  * Connect Antigravity CLI through workspace files in .agents/: the ShareLane
  * MCP server and the shared edit guard as a PreToolUse hook. Existing servers
- * and hooks are preserved. Call after installClaudeClaimHook, which writes the
- * guard script. Antigravity also needs one global permission rule,
+ * and hooks are preserved. The guard script itself lives in .claude/hooks/ and
+ * is written here too. Antigravity also needs one global permission rule,
  * "mcp(sharelane/*)", because its permission rules are global-only.
  */
-export function installAntigravityIntegration(projectRoot = process.cwd()): void {
+export function installAntigravityIntegration(
+  projectRoot: string,
+  launcher: McpLauncher,
+): void {
   const directory = join(projectRoot, ".agents");
   mkdirSync(directory, { recursive: true });
+  installClaimGuardScript(projectRoot);
 
   const mcpPath = join(directory, "mcp_config.json");
   const mcp = readJson(mcpPath);
   mcp.mcpServers = {
     ...(mcp.mcpServers as Record<string, unknown> | undefined),
     sharelane: {
-      command: "node",
-      args: ["node_modules/tsx/dist/cli.mjs", "src/mcp/server.ts"],
+      command: launcher.command,
+      args: launcher.args,
       env: { SHARELANE_AGENT: "antigravity" },
     },
   };

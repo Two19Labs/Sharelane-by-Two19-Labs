@@ -160,8 +160,8 @@ test("init merges Antigravity workspace files and the shared guard blocks its ed
       "utf8",
     );
     installClaudeClaimHook(projectRoot);
-    installAntigravityIntegration(projectRoot);
-    installAntigravityIntegration(projectRoot);
+    installAntigravityIntegration(projectRoot, { command: "node", args: ["bin/sharelane.mjs", "mcp"] });
+    installAntigravityIntegration(projectRoot, { command: "node", args: ["bin/sharelane.mjs", "mcp"] });
 
     const mcp = JSON.parse(await readFile(join(agentsDir, "mcp_config.json"), "utf8"));
     assert.equal(mcp.mcpServers.mine.command, "my-server");

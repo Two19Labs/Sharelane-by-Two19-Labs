@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
+import { findOnPath } from "../../src/core/runner.js";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -11,10 +12,32 @@ const tsxPath = fileURLToPath(
   new URL("../../node_modules/tsx/dist/cli.mjs", import.meta.url),
 );
 
-function runInit(projectRoot: string): Promise<string> {
-  return new Promise((resolve, reject) => {
+/**
+ * Run init with a PATH holding only a stand-in `claude` (plus Git), so agent
+ * detection does not depend on what this machine has installed.
+ */
+async function agentPath(projectRoot: string): Promise<NodeJS.ProcessEnv> {
+  const bin = join(projectRoot, "..", `${basename(projectRoot)}-bin`);
+  await mkdir(bin, { recursive: true });
+  if (process.platform === "win32") {
+    await writeFile(join(bin, "claude.cmd"), "@echo off\r\n", "utf8");
+  } else {
+    await writeFile(join(bin, "claude"), "#!/bin/sh\n", "utf8");
+    await chmod(join(bin, "claude"), 0o755);
+  }
+  const git = findOnPath("git");
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PATH"),
+  );
+  return { ...env, PATH: [bin, ...(git ? [dirname(git)] : [])].join(delimiter) };
+}
+
+async function runInit(projectRoot: string): Promise<string> {
+  const env = await agentPath(projectRoot);
+  return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [tsxPath, cliPath, "init"], {
       cwd: projectRoot,
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
@@ -89,6 +112,14 @@ test("sharelane init creates the context layout without overwriting it", async (
       /blocked an unclaimed edit/,
     );
 
+    const mcp = JSON.parse(await readFile(join(projectRoot, ".mcp.json"), "utf8"));
+    assert.equal(mcp.mcpServers.sharelane.command, "node");
+    assert.match(mcp.mcpServers.sharelane.args[0], /bin[\\/]sharelane\.mjs$/);
+    assert.equal(mcp.mcpServers.sharelane.args[1], "mcp");
+    assert.match(firstOutput, /codex: `codex` is not on PATH; skipped\./);
+    assert.match(firstOutput, /antigravity: `agy` is not on PATH; skipped\./);
+    assert.match(firstOutput, /Created an empty \.sharelane\/checks\.json/);
+
     const architecturePath = join(
       projectRoot,
       ".sharelane",
@@ -113,5 +144,6 @@ test("sharelane init creates the context layout without overwriting it", async (
     );
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
+    await rm(`${projectRoot}-bin`, { recursive: true, force: true });
   }
 });

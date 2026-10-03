@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { getAgentAdapter, loadAgentRegistry } from "../adapters/adapter.js";
 import type { AgentUsage } from "../adapters/result.js";
@@ -158,9 +159,9 @@ const persistedTerminalStatuses = new Set<TaskStatus>([
   "failed",
   "cancelled",
 ]);
-const tsxPath = fileURLToPath(
-  new URL("../../node_modules/tsx/dist/cli.mjs", import.meta.url),
-);
+// Resolve tsx the way Node would from this package, so it is found whether
+// ShareLane runs from its own repo or is installed (and hoisted) in a project.
+const tsxPath = createRequire(import.meta.url).resolve("tsx/cli");
 const workerPath = fileURLToPath(new URL("../worker.ts", import.meta.url));
 
 function emptyTotals(): TaskUsageTotals {
