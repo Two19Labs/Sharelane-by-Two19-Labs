@@ -3,8 +3,8 @@
     "sharelane": {
       "command": "node",
       "args": [
-        "node_modules/tsx/dist/cli.mjs",
-        "src/mcp/server.ts"
+        "bin/sharelane.mjs",
+        "mcp"
       ],
       "env": {
         "SHARELANE_AGENT": "antigravity"

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "checks": {
+    "test": {
+      "command": "npm",
+      "args": [
+        "test"
+      ],
+      "timeoutSeconds": 600
+    },
+    "typecheck": {
+      "command": "npm",
+      "args": [
+        "run",
+        "typecheck"
+      ],
+      "timeoutSeconds": 600
+    }
+  }
+}

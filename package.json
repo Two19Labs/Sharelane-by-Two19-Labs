@@ -2,7 +2,29 @@
   "name": "sharelane",
   "version": "0.1.0",
   "description": "A shared project memory and delegation hub for coding agents.",
+  "license": "MIT",
+  "author": "Manthan Kabra",
   "type": "module",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "coding-agents",
+    "claude-code",
+    "codex",
+    "antigravity",
+    "delegation",
+    "shared-context"
+  ],
+  "bin": {
+    "sharelane": "bin/sharelane.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "dev:mcp": "tsx src/mcp/server.ts",
     "sharelane": "tsx src/cli.ts",
@@ -14,12 +36,12 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",
+    "tsx": "^4.23.15",
     "yaml": "^2.9.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
-    "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }
 }
