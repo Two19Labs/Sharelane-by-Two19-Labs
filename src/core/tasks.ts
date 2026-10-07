@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -303,11 +303,31 @@ function taskMarkdown(task: ShareLaneTask, projectRoot: string): string {
   return `${lines.join("\n")}\n`;
 }
 
+const transientFileErrors = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+/**
+ * Refresh the human-readable task file. SQLite is the source of truth, so if
+ * Windows keeps the file busy (another process replacing or reading it at the
+ * same moment), retry briefly and then skip this refresh instead of failing.
+ */
 function writeTaskFile(task: ShareLaneTask, projectRoot: string): void {
   mkdirSync(dirname(task.taskFile), { recursive: true });
   const temporary = `${task.taskFile}.${process.pid}.tmp`;
   writeFileSync(temporary, taskMarkdown(task, projectRoot), "utf8");
-  renameSync(temporary, task.taskFile);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      renameSync(temporary, task.taskFile);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      if (!transientFileErrors.has(code)) throw error;
+      if (attempt >= 20) {
+        rmSync(temporary, { force: true });
+        return;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
 }
 
 /**

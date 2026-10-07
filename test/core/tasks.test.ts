@@ -27,7 +27,7 @@ async function waitUntilFinished(
   taskId: string,
   projectRoot: string,
 ): Promise<ReturnType<typeof getTask>> {
-  const waited = await waitForTask(taskId, 10_000, projectRoot);
+  const waited = await waitForTask(taskId, 30_000, projectRoot);
   if (waited.timedOut) throw new Error("Timed out waiting for detached task.");
   return waited.task;
 }

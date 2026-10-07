@@ -157,7 +157,7 @@ test("Claude edit hook blocks an unclaimed file and allows a claimed file", asyn
     });
     assert.equal(allowed.status, 0, allowed.stderr);
   } finally {
-    await rm(projectRoot, { recursive: true, force: true });
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 });
   }
 });
 
@@ -213,7 +213,7 @@ test("delegated Git work is isolated, committed, cleaned up, and unclaimed edits
       /Unclaimed edit detected in value\.txt/,
     );
   } finally {
-    await rm(projectRoot, { recursive: true, force: true });
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 });
   }
 });
 
