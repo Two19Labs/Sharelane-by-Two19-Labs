@@ -4,6 +4,14 @@
   "description": "A shared project memory and delegation hub for coding agents.",
   "license": "MIT",
   "author": "Manthan Kabra",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Two19Labs/Sharelane-by-Two19-Labs.git"
+  },
+  "homepage": "https://github.com/Two19Labs/Sharelane-by-Two19-Labs#readme",
+  "bugs": {
+    "url": "https://github.com/Two19Labs/Sharelane-by-Two19-Labs/issues"
+  },
   "type": "module",
   "keywords": [
     "mcp",

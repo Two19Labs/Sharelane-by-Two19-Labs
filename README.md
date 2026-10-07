@@ -63,7 +63,7 @@ Each agent starts its own copy of the ShareLane MCP server. The copies share one
 > Until then, clone this repository and link it:
 >
 > ```sh
-> git clone <this repository> sharelane
+> git clone https://github.com/Two19Labs/Sharelane-by-Two19-Labs.git sharelane
 > cd sharelane
 > npm install
 > npm link
