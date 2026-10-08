@@ -115,6 +115,7 @@ agents:
     # PreToolUse edit guard in .agents/hooks.json, and Git.
     workerNotes:
       - "Terminal commands are not available in this headless run, and a refused command ends your turn immediately. Do not run git, tests, or any other terminal command; use only your file view/edit tools and ShareLane tools. Run approved checks (tests, typecheck, lint) with ShareLane's run_check tool (call it without a name to list them), and say which checks you could not run."
+      - "Only read and edit files inside your own workspace folder. Reading anything outside it (for example the main project folder or its .git directory) is refused, and a refused action ends your turn immediately. Start from the files named in the request and make the change before exploring further."
     quota: none
     output: antigravity-json
     instructionsFile: AGENTS.md
