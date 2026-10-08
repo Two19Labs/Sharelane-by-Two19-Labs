@@ -19,7 +19,10 @@ async function editFiles() {
 
 // FAKE_EDIT_FIRST writes before the delay, so a test can cancel mid-task.
 if (process.env.FAKE_EDIT_FIRST) await editFiles();
-const delay = Number(process.env.FAKE_AGENT_DELAY_MS || 0);
+// DELAY=<ms> as an extra argument works where the environment does not reach
+// (the Windows broker starts workers with a fresh environment).
+const delayArg = extraArgs.find((arg) => arg.startsWith("DELAY="));
+const delay = Number(delayArg ? delayArg.slice(6) : process.env.FAKE_AGENT_DELAY_MS || 0);
 if (delay > 0) {
   await new Promise((resolve) => setTimeout(resolve, delay));
 }

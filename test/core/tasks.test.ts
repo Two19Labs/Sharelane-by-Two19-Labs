@@ -334,7 +334,8 @@ test(
           fake: {
             displayName: "Fake Agent",
             command: process.execPath,
-            run: { args: [fixturePath, "codex-jsonl", "{prompt}"] },
+            // A 3 s job, so the worker is still running when the broker reports its ID.
+            run: { args: [fixturePath, "codex-jsonl", "{prompt}", "", "DELAY=3000"] },
             resume: {
               args: [fixturePath, "codex-jsonl", "{prompt}", "{session}"],
             },
