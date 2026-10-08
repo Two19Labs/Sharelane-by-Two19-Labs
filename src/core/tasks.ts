@@ -567,17 +567,22 @@ function launchTaskWorker(
   const configPath =
     env?.SHARELANE_AGENTS_CONFIG ?? process.env.SHARELANE_AGENTS_CONFIG ?? "";
   if (process.platform === "win32" && env === undefined) {
-    const workerPid = launchWindowsBrokeredWorker(
-      task.id,
-      projectRoot,
-      configPath,
-    );
-    return updateTask(
-      task.id,
-      { worker_pid: workerPid, updated_at: new Date().toISOString() },
-      projectRoot,
-      ["queued", "running"], // the worker may already have started
-    ).task;
+    let workerPid: number | undefined;
+    try {
+      workerPid = launchWindowsBrokeredWorker(task.id, projectRoot, configPath);
+    } catch {
+      // The broker (PowerShell + CIM) can be slow or unavailable. Fall back to
+      // a direct detached start: it may end with its caller's process tree,
+      // but that beats not starting the task at all.
+    }
+    if (workerPid !== undefined) {
+      return updateTask(
+        task.id,
+        { worker_pid: workerPid, updated_at: new Date().toISOString() },
+        projectRoot,
+        ["queued", "running"], // the worker may already have started
+      ).task;
+    }
   }
 
   const child = spawn(process.execPath, [tsxPath, workerPath, task.id], {
@@ -663,7 +668,7 @@ function launchWindowsBrokeredWorker(
       env: { ...process.env, SHARELANE_WORKER_COMMAND: commandLine },
       shell: false,
       windowsHide: true,
-      timeout: 10_000,
+      timeout: 30_000, // a cold PowerShell start can be slow
     },
   );
   if (launched.error) throw launched.error;
