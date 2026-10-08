@@ -128,6 +128,7 @@ export function parseRunLog(text) {
     if (!line.trim()) continue;
     let match;
     if ((match = /^ShareLane run: (.+)$/.exec(line))) { flushStderr(); push({ kind: "system", text: `Run started (${match[1]})` }); continue; }
+    if ((match = /^Model: (.+)$/.exec(line))) { push({ kind: "system", text: `Model: ${match[1]}` }); continue; }
     if ((match = /^Started: (.+)$/.exec(line))) { push({ kind: "time", at: match[1] }); continue; }
     if ((match = /^Finished: (.+)$/.exec(line))) { flushStderr(); push({ kind: "system", text: "Run finished", at: match[1] }); continue; }
     if ((match = /^Exit code: (.+)$/.exec(line))) {

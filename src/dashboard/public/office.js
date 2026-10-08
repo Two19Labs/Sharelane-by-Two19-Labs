@@ -1039,6 +1039,10 @@ export function createOffice(ui) {
     const prompt = h("textarea", { rows: 5, required: true, placeholder: "What should they do? Name the files and what “done” looks like.", "aria-label": "Task" });
     const scope = h("input", { type: "text", placeholder: "Optional: src/ui/**, README.md", "aria-label": "Allowed files" });
     const budget = h("input", { type: "number", min: 1000, step: 1000, placeholder: "Optional, e.g. 200000", "aria-label": "Token budget" });
+    const tier = h("select", { "aria-label": "Model" },
+      [["auto", "Auto: guess from the task (recommended)"], ["fast", "Fast: cheapest, for small, clear changes"],
+        ["balanced", "Balanced: everyday features and fixes"], ["strong", "Strong: hard problems, design, debugging"],
+        ["default", "The agent's own default model"]].map(([value, text]) => h("option", { value, text })));
     const submit = h("button", { class: "btn primary", type: "submit" }, "Assign task");
     return h("form", { class: "new-task", onsubmit: async (event) => {
       event.preventDefault();
@@ -1046,6 +1050,7 @@ export function createOffice(ui) {
       const body = { agent: agentSelect.value, prompt: prompt.value };
       if (scope.value.trim()) body.scope = scope.value;
       if (budget.value) body.budgetTokens = Number(budget.value);
+      body.tier = tier.value;
       const ok = await act("Task assigned. Watch them head to their desk.", "/api/tasks", body, submit);
       const lastAssigned = lastResult?.taskId;
       if (ok) { prompt.value = ""; scope.value = ""; budget.value = ""; select(employees.has(lastAssigned) ? lastAssigned : `agent:${agentSelect.value}`); }
@@ -1053,6 +1058,7 @@ export function createOffice(ui) {
     h("label", {}, h("span", { text: "Who" }), agentSelect),
     h("label", {}, h("span", { text: "Task" }), prompt),
     h("label", {}, h("span", { text: "Allowed files" }), scope, h("small", { class: "muted", text: "Leave empty to allow the whole project. Patterns are separated by commas." })),
+    h("label", {}, h("span", { text: "Model" }), tier, h("small", { class: "muted", text: "ShareLane maps this to each agent's model: Claude Haiku / Sonnet / Opus, Antigravity Gemini Flash / Pro, Codex low / medium / high effort." })),
     h("label", {}, h("span", { text: "Token budget" }), budget),
     h("div", { class: "row" }, h("span", { class: "muted", text: "They work on their own branch. Nothing is merged without you." }), submit));
   }
@@ -1139,6 +1145,7 @@ export function createOffice(ui) {
       part("facts").replaceChildren(...[
         h("dt", { text: "Branch" }), h("dd", { class: "mono", text: task.branchName ?? "direct workspace" }),
         h("dt", { text: "Changed" }), h("dd", { class: "mono", text: task.changedFiles.length ? task.changedFiles.join(", ") : "nothing yet" }),
+        h("dt", { text: "Model" }), h("dd", { text: `${task.modelTier ? task.modelTier[0].toUpperCase() + task.modelTier.slice(1) : "Agent default"} · ${task.modelLabel}${task.modelTierReason ? ` (${task.modelTierReason})` : ""}` }),
         h("dt", { text: "Allowed" }), h("dd", { class: "mono", text: task.scope?.length ? task.scope.join(", ") : "whole project" }),
         h("dt", { text: "Tokens" }), h("dd", { class: "num", text: `${formatCompact(task.freshTokens)} fresh${task.budgetTokens ? ` of ${formatCompact(task.budgetTokens)} budget` : ""} · ${task.usage.runs} run(s)` }),
         task.error ? [h("dt", { text: "Problem" }), h("dd", { text: task.error })] : null,

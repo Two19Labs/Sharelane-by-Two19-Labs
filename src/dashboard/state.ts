@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, openSync, readdirSync, readFileSync, readSync, closeSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { loadAgentRegistry } from "../adapters/adapter.js";
+import { getAgentAdapter, loadAgentRegistry } from "../adapters/adapter.js";
+import { describeModel, modelForTier } from "../core/tiers.js";
 import { listActiveClaims, type ShareLaneClaim } from "../core/claims.js";
 import { isChunkStale, parseChunk } from "../core/context.js";
 import { getShareLanePaths, openDatabase } from "../core/database.js";
@@ -44,6 +45,10 @@ export interface DashboardTask {
   handoffReason?: string;
   dismissedAt?: string;
   conversationClosedAt?: string;
+  modelTier?: string;
+  modelTierReason?: string;
+  /** The model this tier means for the task's agent, e.g. "sonnet". */
+  modelLabel: string;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -119,6 +124,14 @@ function firstLine(text: string): string {
   return line.length > 140 ? `${line.slice(0, 139)}…` : line;
 }
 
+function modelLabel(task: ShareLaneTask): string {
+  try {
+    return describeModel(modelForTier(getAgentAdapter(task.agent), task.modelTier));
+  } catch {
+    return "unknown agent";
+  }
+}
+
 function toDashboardTask(task: ShareLaneTask, projectRoot: string): DashboardTask {
   return {
     id: task.id,
@@ -138,6 +151,9 @@ function toDashboardTask(task: ShareLaneTask, projectRoot: string): DashboardTas
     handoffReason: task.handoffReason,
     dismissedAt: task.dismissedAt,
     conversationClosedAt: task.conversationClosedAt,
+    modelTier: task.modelTier,
+    modelTierReason: task.modelTierReason,
+    modelLabel: modelLabel(task),
     error: task.error ? firstLine(task.error) : undefined,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,

@@ -11,6 +11,7 @@ agents:
         - --output-format
         - json
         - "{scopeArgs}"
+        - "{modelArgs}"
         - --mcp-config
         - .mcp.json
         - --strict-mcp-config
@@ -25,6 +26,7 @@ agents:
         - --output-format
         - json
         - "{scopeArgs}"
+        - "{modelArgs}"
         - --mcp-config
         - .mcp.json
         - --strict-mcp-config
@@ -42,6 +44,15 @@ agents:
         - --allowedTools
         - "Edit({scopePattern})"
         - "Write({scopePattern})"
+    # Model tiers (src/core/tiers.ts): whoever delegates picks how hard the task
+    # is; ShareLane passes the matching model here. Change these freely.
+    tiers:
+      fast: { model: haiku }
+      balanced: { model: sonnet }
+      strong: { model: opus }
+    modelFlags:
+      model: ["--model", "{value}"]
+      effort: ["--effort", "{value}"]
     quota: claude
     output: claude-json
     instructionsFile: CLAUDE.md
@@ -57,6 +68,7 @@ agents:
         - workspace-write
         - --skip-git-repo-check
         - "{scopeArgs}"
+        - "{modelArgs}"
         - -c
         - 'mcp_servers.sharelane.env_vars=["SHARELANE_TASK_ID","SHARELANE_PROJECT_ROOT","SHARELANE_WORKSPACE_ROOT","SHARELANE_PARENT","SHARELANE_DEPTH"]'
         - "{prompt}"
@@ -64,6 +76,7 @@ agents:
       args:
         - exec
         - "{scopeArgs}"
+        - "{modelArgs}"
         - resume
         - -c
         - 'mcp_servers.sharelane.env_vars=["SHARELANE_TASK_ID","SHARELANE_PROJECT_ROOT","SHARELANE_WORKSPACE_ROOT","SHARELANE_PARENT","SHARELANE_DEPTH"]'
@@ -83,6 +96,15 @@ agents:
         - sandbox_workspace_write.exclude_tmpdir_env_var=true
         - -c
         - sandbox_workspace_write.exclude_slash_tmp=true
+    # Codex keeps the model set in ~/.codex/config.toml; tiers change how hard
+    # it thinks. Add "model:" to a tier to switch models as well.
+    tiers:
+      fast: { effort: low }
+      balanced: { effort: medium }
+      strong: { effort: high }
+    modelFlags:
+      model: ["-m", "{value}"]
+      effort: ["-c", "model_reasoning_effort=\"{value}\""]
     quota: codex
     output: codex-jsonl
     instructionsFile: AGENTS.md
@@ -101,6 +123,7 @@ agents:
         - json
         - --mode
         - accept-edits
+        - "{modelArgs}"
     resume:
       args:
         - -p
@@ -111,11 +134,20 @@ agents:
         - json
         - --mode
         - accept-edits
+        - "{modelArgs}"
     # No native per-path restriction: scope is enforced by claims, the
     # PreToolUse edit guard in .agents/hooks.json, and Git.
     workerNotes:
       - "Terminal commands are not available in this headless run, and a refused command ends your turn immediately. Do not run git, tests, or any other terminal command; use only your file view/edit tools and ShareLane tools. Run approved checks (tests, typecheck, lint) with ShareLane's run_check tool (call it without a name to list them), and say which checks you could not run."
       - "Only read and edit files inside your own workspace folder. Reading anything outside it (for example the main project folder or its .git directory) is refused, and a refused action ends your turn immediately. Start from the files named in the request and make the change before exploring further."
+    # Model names from `agy models`.
+    tiers:
+      fast: { model: gemini-3.8-flash-low }
+      balanced: { model: gemini-3.8-flash-high }
+      strong: { model: gemini-3.1-pro-high }
+    modelFlags:
+      model: ["--model", "{value}"]
+      effort: ["--effort", "{value}"]
     quota: none
     output: antigravity-json
     instructionsFile: AGENTS.md

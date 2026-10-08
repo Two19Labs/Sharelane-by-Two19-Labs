@@ -6,6 +6,7 @@ import { scopeDirectories } from "./core/scope.js";
 
 import { getAgentAdapter } from "./adapters/adapter.js";
 import { checkQuota } from "./core/quota.js";
+import { modelForTier } from "./core/tiers.js";
 import { runAgent } from "./core/runner.js";
 import { contextMap } from "./core/memory.js";
 import { heartbeatClaims, releaseClaims } from "./core/claims.js";
@@ -183,6 +184,7 @@ async function main(): Promise<void> {
       projectRoot: workspaceRoot,
       sessionId: task.sessionId,
       scope: task.scope ? { patterns: task.scope, directories } : undefined,
+      model: modelForTier(adapter, task.modelTier),
       logPath: task.logPath,
       onSpawn: (processId) => setTaskAgentProcess(task.id, processId, projectRoot),
     });

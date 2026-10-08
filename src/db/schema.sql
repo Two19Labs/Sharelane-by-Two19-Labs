@@ -6,7 +6,7 @@ INSERT INTO schema_info (version)
 SELECT 1
 WHERE NOT EXISTS (SELECT 1 FROM schema_info);
 
-UPDATE schema_info SET version = 7;
+UPDATE schema_info SET version = 8;
 
 CREATE TABLE IF NOT EXISTS chunks (
   id TEXT PRIMARY KEY,
@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   handoff_reason TEXT,
   dismissed_at TEXT,
   conversation_closed_at TEXT,
+  model_tier TEXT CHECK (model_tier IS NULL OR model_tier IN ('fast', 'balanced', 'strong')),
+  model_tier_reason TEXT,
   created_at TEXT NOT NULL,
   started_at TEXT,
   finished_at TEXT,

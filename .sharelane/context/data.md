@@ -2,8 +2,8 @@
 title: Data and storage
 read-when: Changing stored data, schemas, search, migrations, or persistence.
 covers-files: ["src/db/**","src/core/database.ts","src/core/context.ts","src/core/memory.ts","src/core/claims.ts","src/core/notices.ts","src/core/tasks.ts"]
-updated-at: 2026-10-08T08:30:47.541Z
-source-hash: ba52f4a45f806c66170416b9ddcddccad8ba35ec7343c78c066524fdb710ec9f
+updated-at: 2026-10-08T17:24:17.362Z
+source-hash: b62f733468d9355bd02336d705cfbf6e06ab7bc5034c431bdee686a65c763e5b
 ---
 
 # Data and storage
@@ -12,19 +12,19 @@ Curated context lives in committed Markdown files under .sharelane/context. MAP.
 
 `.sharelane/checks.json` (committed, `{version: 1, checks: {name: {command, args, timeoutSeconds, description?}}}`) is the owner's allow-list for `run_check`. `init` creates it from package.json `test`/`typecheck`/`lint` and never overwrites it. It is always read from the project checkout, never from a worker's worktree copy.
 
-Local runtime state lives in .sharelane/sharelane.db using SQLite WAL mode. Schema version 7 stores:
-- **tasks:** status including `needs_reassignment` and `paused`; worktree hand-back metadata; scope and scope violations; `budget_tokens`, `reassignments`, `handoff_reason`; `dismissed_at` (you finished with it, so the office stops showing it) and `conversation_closed_at` (you ended the chat);
+Local runtime state lives in .sharelane/sharelane.db using SQLite WAL mode. Schema version 8 stores:
+- **tasks:** status including `needs_reassignment` and `paused`; worktree hand-back metadata; scope and scope violations; `budget_tokens`, `reassignments`, `handoff_reason`; `dismissed_at` (you finished with it, so the office stops showing it) and `conversation_closed_at` (you ended the chat); `model_tier` (`fast`/`balanced`/`strong`, or null for the agent's own model) and `model_tier_reason`;
 - **task_runs:** one row per agent run, with outcome and usage JSON;
 - **task_messages:** complete conversations;
 - **task_lineage:** loop-safe agent paths (the last entry is replaced on reassignment);
 - **claims:** expiring path claims;
 - **notices:** deliverable notices (collision, scope, handoff, budget). A handoff's notice is written before the task is marked `needs_reassignment`.
 
-Opening an older database adds missing columns (v7's two are plain `ALTER TABLE ADD COLUMN`) and, when the stored tasks status CHECK differs from the current schema's, rebuilds the tasks table once with foreign keys off (`allowCurrentStatuses`; v5 added `needs_reassignment`, v6 `paused`). Task usage totals come from task_runs. Pre-run-log tasks count their saved `usage_json` as one run (`freshInputOf`).
+Opening an older database adds missing columns (v7 and v8 columns are plain `ALTER TABLE ADD COLUMN`) and, when the stored tasks status CHECK differs from the current schema's, rebuilds the tasks table once with foreign keys off (`allowCurrentStatuses`; v5 added `needs_reassignment`, v6 `paused`). Task usage totals come from task_runs. Pre-run-log tasks count their saved `usage_json` as one run (`freshInputOf`).
 
-Task control (`tasks.ts`): `cancelTask` and `pauseTask` share `stopTask` (stop agent and supervisor, close runs, release claims, commit work to the branch, remove the worktree). The worker treats both as stopped by the user (`isStoppedByUser`) and records no failure. `resumeTask` goes through `replyToTask`, which accepts `completed` (with a session) or `paused`, refuses a task whose conversation was closed, and clears `dismissed_at`; without a session the resume message repeats the original request plus the latest instruction. Cancelling a paused task only changes its status. `dismissTask` (completed, failed, or cancelled only) sets `dismissed_at` and, with `endConversation`, `conversation_closed_at`; it never touches the branch.
+Task control (`tasks.ts`): `delegateTask` resolves the requested tier with `chooseTier` (`src/core/tiers.ts`) and stores it; the worker maps it to the running agent's model on every run (`modelForTier`), so follow-ups and handoffs keep it. `cancelTask` and `pauseTask` share `stopTask` (stop agent and supervisor, close runs, release claims, commit work to the branch, remove the worktree). The worker treats both as stopped by the user (`isStoppedByUser`) and records no failure. `resumeTask` goes through `replyToTask`, which accepts `completed` (with a session) or `paused`, refuses a task whose conversation was closed, and clears `dismissed_at`; without a session the resume message repeats the original request plus the latest instruction. Cancelling a paused task only changes its status. `dismissTask` (completed, failed, or cancelled only) sets `dismissed_at` and, with `endConversation`, `conversation_closed_at`; it never touches the branch.
 
-Human-readable task snapshots, out-of-scope patches, handoff notes, and task logs live under .sharelane/tasks; raw run output lives under .sharelane/runs.
+Human-readable task snapshots, out-of-scope patches, handoff notes, and task logs (which start with `ShareLane run`, `Model`, and `Started` lines) live under .sharelane/tasks; raw run output lives under .sharelane/runs.
 
 Outside the project, Claude's usage snapshot is `~/.sharelane/usage/claude.json` (usage numbers only, never a token). Codex usage is read, never written, from `~/.codex/sessions`.
 

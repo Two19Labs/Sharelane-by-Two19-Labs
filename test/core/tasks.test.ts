@@ -312,7 +312,7 @@ test("an older database is upgraded in place to accept paused tasks", async () =
       const row = upgraded.prepare("SELECT status, prompt FROM tasks WHERE id = 'task-old'").get() as { status: string; prompt: string };
       assert.deepEqual({ ...row }, { status: "paused", prompt: "old work" });
       const version = upgraded.prepare("SELECT version FROM schema_info").get() as { version: number };
-      assert.equal(version.version, 7);
+      assert.equal(version.version, 8);
     } finally {
       upgraded.close();
     }

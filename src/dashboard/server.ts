@@ -152,8 +152,13 @@ export async function startDashboard(options: {
           ?.split(/[\n,]+/)
           .map((pattern) => pattern.trim())
           .filter(Boolean);
+        const tier = optionalText(body, "tier");
+        if (tier && !["fast", "balanced", "strong", "auto", "default"].includes(tier)) {
+          throw new Error('"tier" must be fast, balanced, strong, auto, or default.');
+        }
         const task = delegateTask({
           agent: requiredText(body, "agent"),
+          tier: tier as "fast" | "balanced" | "strong" | "auto" | "default" | undefined,
           prompt: requiredText(body, "prompt"),
           callerAgent: "you",
           scope: scope && scope.length > 0 ? scope : undefined,

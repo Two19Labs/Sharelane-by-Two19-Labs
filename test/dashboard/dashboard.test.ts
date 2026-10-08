@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
@@ -36,6 +36,8 @@ before(async () => {
           command: process.execPath,
           run: { args: [fixturePath, "codex-jsonl", "{prompt}"] },
           resume: { args: [fixturePath, "codex-jsonl", "{prompt}", "{session}"] },
+          // Tiers without a {modelArgs} slot: the run is labelled but the fake gets no extra flags.
+          tiers: { fast: { model: "tiny" }, strong: { model: "huge" } },
           output: "codex-jsonl",
           instructionsFile: "AGENTS.md",
         },
@@ -195,10 +197,13 @@ test("controls need the page's token and origin, then assign, pause, resume, rep
   workerEnv.FAKE_AGENT_DELAY_MS = "5000";
   let slowId = "";
   try {
-    const assigned = await post("/api/tasks", { agent: "fake", prompt: "slow office work", budgetTokens: 100000 });
+    assert.equal((await post("/api/tasks", { agent: "fake", prompt: "x", tier: "huge" })).status, 409, "unknown tiers are refused");
+    const assigned = await post("/api/tasks", { agent: "fake", prompt: "slow office work", budgetTokens: 100000, tier: "fast" });
     assert.equal(assigned.status, 200, assigned.body.error ?? "");
     slowId = assigned.body.taskId ?? "";
     assert.equal(getTask(slowId, projectRoot).callerAgent, "you");
+    assert.equal(getTask(slowId, projectRoot).modelTier, "fast");
+    assert.equal(getTask(slowId, projectRoot).modelTierReason, "chosen by you");
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline && !(getTask(slowId, projectRoot).status === "running" && getTask(slowId, projectRoot).agentPid)) {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -219,6 +224,9 @@ test("controls need the page's token and origin, then assign, pause, resume, rep
   assert.match(finished.task.result ?? "", /You were paused partway through this task/);
   assert.match(finished.task.result ?? "", /The task:\nslow office work/, "a fresh run gets the original request again");
   assert.match(finished.task.result ?? "", /Also add a changelog line\./);
+  assert.match(readFileSync(finished.task.logPath, "utf8"), /^Model: tiny$/m, "the resumed run keeps the task's tier");
+  const shown = (JSON.parse((await get("/api/state")).body).tasks as Array<{ id: string; modelLabel: string }>).find((task) => task.id === slowId);
+  assert.equal(shown?.modelLabel, "tiny");
 
   const replied = await post(`/api/tasks/${slowId}/reply`, { message: "thanks" });
   assert.equal(replied.status, 200, replied.body.error ?? "");

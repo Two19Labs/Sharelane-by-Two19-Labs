@@ -65,6 +65,7 @@ function taskStatusText(task: ShareLaneTask): string {
     lines.push(`Changed files: ${task.changedFiles.join(", ")}`);
   }
   lines.push(`Scope: ${describeScope(task.scope)}`);
+  lines.push(`Model tier: ${task.modelTier ?? "agent default"}${task.modelTierReason ? ` (${task.modelTierReason})` : ""}`);
   lines.push(`Usage: ${describeUsage(task)}`);
   if (task.reassignments > 0) lines.push(`Reassignments: ${task.reassignments}`);
   if (task.handoffReason) lines.push(`Handoff reason: ${task.handoffReason}`);
@@ -371,9 +372,15 @@ server.registerTool(
         .describe(
           "Optional limit on fresh tokens (new input plus output) across all runs of this task, including follow-ups and reassignments.",
         ),
+      tier: z
+        .enum(["fast", "balanced", "strong", "auto", "default"])
+        .optional()
+        .describe(
+          "How hard the task is; ShareLane runs the agent on the matching model. fast: mechanical, fully specified edits (renames, docs, copy, small fixes, simple scaffolding). balanced: typical features, bug fixes, and tests. strong: design decisions, cross-cutting refactors, tricky debugging, security, or anything where a wrong answer is costly. Cost rises steeply from fast to strong, so pick the cheapest tier you expect to succeed. Omit or \"auto\" to let ShareLane guess from the wording; \"default\" keeps the agent's own model.",
+        ),
     },
   },
-  async ({ agent, task, scope, budgetTokens }) => {
+  async ({ agent, task, scope, budgetTokens, tier }) => {
     const delegated = delegateTask({
       agent,
       prompt: task,
@@ -382,6 +389,7 @@ server.registerTool(
       callerAgent: currentAgent,
       scope,
       budgetTokens,
+      tier,
     });
     const warnings = delegated.duplicateWarnings?.length
       ? ` Warnings: ${delegated.duplicateWarnings.join(" ")}`

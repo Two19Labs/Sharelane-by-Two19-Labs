@@ -24,6 +24,7 @@ ShareLane gives all of them one shared notebook for the project and one place to
 - **Usage, quota and handoff.** Token use is recorded for every run. Before each run, ShareLane checks the agent's remaining allowance. At 7% or less, or when a run fails because the agent ran out, it saves the work, writes a handoff note and passes the task to another agent on the same branch. ("Could not tell" is reported, never treated as "fine", but it does not block a run on its own.)
 - **Token budgets** per task.
 - **Approved checks (`run_check`).** Agents can ask ShareLane to run commands you approved, such as `npm test`, without getting a terminal.
+- **Right model for each task.** Whoever hands out work picks how hard it is (fast, balanced, or strong), or lets ShareLane guess from the wording, and each agent runs on the matching model: Claude Haiku, Sonnet, or Opus; Antigravity Gemini Flash or Pro; Codex at low, medium, or high effort. Edit the mapping in `agents.yaml`.
 - **Live office dashboard.** A local page that shows your agents as employees in a pixel-art office: at their desk when working, at the review board when finished, in the meeting room when they need you. Click one to read its conversation and live output, and to pause, resume, stop, message, or assign it work. A Details tab has the tables: tasks, claims, allowance meters, token use, and the context map.
 
 ## How it fits together

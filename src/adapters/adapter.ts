@@ -17,6 +17,11 @@ const scopeArgsSchema = z.object({
   unscoped: z.array(z.string()).default([]),
 });
 
+const tierSettingSchema = z.object({
+  model: z.string().trim().min(1).optional(),
+  effort: z.string().trim().min(1).optional(),
+});
+
 const agentAdapterSchema = z.object({
   displayName: z.string().trim().min(1),
   command: z.string().trim().min(1),
@@ -25,6 +30,16 @@ const agentAdapterSchema = z.object({
   scope: scopeArgsSchema.optional(),
   // Built-in reader for remaining subscription allowance (see src/core/quota.ts).
   quota: z.enum(["claude", "codex", "none"]).optional(),
+  // How each model tier maps to this agent's models (see src/core/tiers.ts).
+  tiers: z
+    .object({ fast: tierSettingSchema, balanced: tierSettingSchema, strong: tierSettingSchema })
+    .partial()
+    .optional(),
+  // Replace a "{modelArgs}" template element: each list is used when the tier
+  // sets that value, with "{value}" filled in.
+  modelFlags: z
+    .object({ model: z.array(z.string()).optional(), effort: z.array(z.string()).optional() })
+    .optional(),
   // Agent-specific lines added to a new delegated task's instructions.
   workerNotes: z.array(z.string().trim().min(1)).optional(),
   output: outputFormatSchema,
@@ -69,8 +84,8 @@ function validateTemplate(
   );
   const allowed =
     name === "run"
-      ? new Set(["prompt", "scopeArgs"])
-      : new Set(["prompt", "session", "scopeArgs"]);
+      ? new Set(["prompt", "scopeArgs", "modelArgs"])
+      : new Set(["prompt", "session", "scopeArgs", "modelArgs"]);
   const unknown = placeholders.filter((placeholder) => !allowed.has(placeholder));
   if (unknown.length > 0) {
     throw new Error(
@@ -83,10 +98,10 @@ function validateTemplate(
   if (name === "resume" && !placeholders.includes("session")) {
     throw new Error(`Adapter "${agent}" resume command must include {session}.`);
   }
-  if (args.some((arg) => arg.includes("{scopeArgs}") && arg !== "{scopeArgs}")) {
-    throw new Error(
-      `Adapter "${agent}" ${name} command must use {scopeArgs} as a whole argument.`,
-    );
+  for (const slot of ["{scopeArgs}", "{modelArgs}"]) {
+    if (args.some((arg) => arg.includes(slot) && arg !== slot)) {
+      throw new Error(`Adapter "${agent}" ${name} command must use ${slot} as a whole argument.`);
+    }
   }
 }
 
@@ -163,16 +178,25 @@ export function buildAgentCommand(
   sessionId?: string,
   registry = loadAgentRegistry(),
   scope?: CommandScope,
+  model?: { model?: string; effort?: string },
 ): AgentCommand {
   const adapter = getAgentAdapter(agent, registry);
   const template = sessionId ? adapter.resume.args : adapter.run.args;
   const scopeArgs = scope
     ? expandScopeArgs(adapter.scope?.scoped ?? [], scope)
     : (adapter.scope?.unscoped ?? []);
+  const fill = (flag: string[] | undefined, value: string | undefined) =>
+    flag && value ? flag.map((part) => part.replaceAll("{value}", value)) : [];
+  const modelArgs = [
+    ...fill(adapter.modelFlags?.model, model?.model),
+    ...fill(adapter.modelFlags?.effort, model?.effort),
+  ];
   const args = template.flatMap((argument) =>
     argument === "{scopeArgs}"
       ? scopeArgs
-      : [
+      : argument === "{modelArgs}"
+        ? modelArgs
+        : [
           argument
             .replaceAll("{prompt}", prompt)
             .replaceAll("{session}", sessionId ?? ""),

@@ -34,6 +34,8 @@ const taskColumns: Record<string, string> = {
   handoff_reason: "TEXT",
   dismissed_at: "TEXT",
   conversation_closed_at: "TEXT",
+  model_tier: "TEXT CHECK (model_tier IS NULL OR model_tier IN ('fast', 'balanced', 'strong'))",
+  model_tier_reason: "TEXT",
 };
 
 const statusCheckPattern = /status TEXT NOT NULL CHECK \(status IN \([^)]*\)\)/;
@@ -91,7 +93,7 @@ function migrateExistingDatabase(database: DatabaseSync): void {
     }
   }
   allowCurrentStatuses(database);
-  database.exec("UPDATE schema_info SET version = 7;");
+  database.exec("UPDATE schema_info SET version = 8;");
 }
 
 export function getShareLanePaths(projectRoot = process.cwd()): ShareLanePaths {

@@ -13,6 +13,7 @@ import {
   parseAgentOutput,
   type AgentUsage,
 } from "../adapters/result.js";
+import { describeModel, type ModelSelection } from "./tiers.js";
 
 export interface RunAgentOptions {
   agent: string;
@@ -23,6 +24,8 @@ export interface RunAgentOptions {
   logPath?: string;
   env?: NodeJS.ProcessEnv;
   scope?: CommandScope;
+  /** Model and effort for this run (from the task's tier); omitted = the agent's own default. */
+  model?: ModelSelection;
   onSpawn?: (processId: number | undefined) => void;
 }
 
@@ -118,13 +121,14 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
     options.sessionId,
     registry,
     options.scope,
+    options.model,
   );
   const logPath = options.logPath ?? defaultLogPath(projectRoot, options.agent);
   await mkdir(dirname(logPath), { recursive: true });
 
   const startedAt = new Date().toISOString();
   const log = createWriteStream(logPath, { encoding: "utf8", flags: "a" });
-  log.write(`ShareLane run: ${options.agent}\nStarted: ${startedAt}\n\n`);
+  log.write(`ShareLane run: ${options.agent}\nModel: ${describeModel(options.model)}\nStarted: ${startedAt}\n\n`);
 
   const env = { ...process.env, ...options.env };
   const executable = resolveAgentExecutable(command.command, env);

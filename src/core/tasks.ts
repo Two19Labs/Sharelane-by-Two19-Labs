@@ -22,6 +22,7 @@ import {
   finalizeTaskWorkspace,
   type FinalizedWorkspace,
 } from "./worktrees.js";
+import { chooseTier, type ModelTier, type TierRequest } from "./tiers.js";
 
 export type TaskStatus =
   | "queued"
@@ -81,6 +82,9 @@ export interface ShareLaneTask {
   dismissedAt?: string;
   /** You ended the conversation; no more follow-ups go to the agent. */
   conversationClosedAt?: string;
+  /** Model tier for every run of this task, whichever agent runs it; undefined = the agent's own model. */
+  modelTier?: ModelTier;
+  modelTierReason?: string;
   duplicateWarnings?: string[];
   createdAt: string;
   startedAt?: string;
@@ -117,6 +121,8 @@ interface TaskRow {
   handoff_reason: string | null;
   dismissed_at: string | null;
   conversation_closed_at: string | null;
+  model_tier: string | null;
+  model_tier_reason: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -141,6 +147,8 @@ export interface DelegateTaskInput {
   scope?: string[];
   /** Optional limit on fresh tokens (new input plus output) across all runs. */
   budgetTokens?: number;
+  /** How hard the task is; maps to a model per agent. Omitted or "auto" guesses from the wording. */
+  tier?: TierRequest;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -224,6 +232,8 @@ function fromRow(row: TaskRow): ShareLaneTask {
     handoffReason: row.handoff_reason ?? undefined,
     dismissedAt: row.dismissed_at ?? undefined,
     conversationClosedAt: row.conversation_closed_at ?? undefined,
+    modelTier: (row.model_tier as ModelTier | null) ?? undefined,
+    modelTierReason: row.model_tier_reason ?? undefined,
     createdAt: row.created_at,
     startedAt: row.started_at ?? undefined,
     finishedAt: row.finished_at ?? undefined,
@@ -893,6 +903,7 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
   const paths = getShareLanePaths(projectRoot);
   const taskFile = join(paths.tasksDir, `${id}.md`);
   const logPath = join(paths.tasksDir, `${id}.log`);
+  const tierChoice = chooseTier(input.tier, input.prompt, callerAgent === "unknown" ? "the caller" : callerAgent);
   const task: ShareLaneTask = {
     id,
     agent: input.agent,
@@ -910,6 +921,8 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
     scopeViolations: [],
     totalUsage: emptyTotals(),
     budgetTokens: input.budgetTokens,
+    modelTier: tierChoice.tier,
+    modelTierReason: tierChoice.reason,
     reassignments: 0,
     duplicateWarnings,
     taskFile,
@@ -927,8 +940,9 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
         `INSERT INTO tasks (
           id, agent, prompt, status, parent_id, depth, task_file, log_path,
           caller_agent, source_root, worktree_path, branch_name, base_commit,
-          changed_files_json, scope_json, budget_tokens, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          changed_files_json, scope_json, budget_tokens, model_tier, model_tier_reason,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         task.id,
@@ -947,6 +961,8 @@ export function delegateTask(input: DelegateTaskInput): ShareLaneTask {
         JSON.stringify(task.changedFiles),
         task.scope ? JSON.stringify(task.scope) : null,
         task.budgetTokens ?? null,
+        task.modelTier ?? null,
+        task.modelTierReason ?? null,
         task.createdAt,
         task.updatedAt,
       );
