@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, openSync, readdirSync, readFileSync, readSync, closeSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { loadAgentRegistry } from "../adapters/adapter.js";
@@ -345,4 +346,103 @@ export function readTaskLog(
     closeSync(handle);
   }
   return { text: buffer.toString("utf8"), nextOffset: start + length, size };
+}
+
+export interface TaskChangeFile {
+  path: string;
+  status: "added" | "modified" | "deleted" | "changed";
+  additions: number | null;
+  deletions: number | null;
+}
+
+export interface TaskChanges {
+  available: boolean;
+  reason?: string;
+  branchName?: string;
+  baseCommit?: string;
+  files: TaskChangeFile[];
+  patch: string;
+  truncated: boolean;
+  /** The agent's last reply: its own report of what it did. */
+  report?: string;
+}
+
+const MAX_PATCH = 400 * 1024;
+const branchPattern = /^sharelane\/task-[0-9a-f-]+$/;
+const commitPattern = /^[0-9a-f]{7,64}$/;
+
+function git(cwd: string, args: string[]): Buffer {
+  return execFileSync("git", args, { cwd, maxBuffer: 32 * 1024 * 1024, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+}
+
+/** Branch and base commit of a task, validated before they reach a git argument list. */
+function taskBranch(task: ShareLaneTask): { branch: string; base: string } | undefined {
+  if (!task.branchName || !task.baseCommit) return undefined;
+  if (!branchPattern.test(task.branchName) || !commitPattern.test(task.baseCommit)) return undefined;
+  return { branch: task.branchName, base: task.baseCommit };
+}
+
+/**
+ * Compare a task's branch with the commit it started from. Read-only: it runs
+ * `git diff` only, with fixed arguments and validated refs.
+ */
+export function collectTaskChanges(taskId: string, projectRoot = process.cwd()): TaskChanges {
+  const task = getTask(taskId, projectRoot);
+  const messages = listTaskMessages(taskId, projectRoot);
+  const report = [...messages].reverse().find((message) => message.role === "assistant")?.content;
+  const empty = { files: [], patch: "", truncated: false, report, branchName: task.branchName, baseCommit: task.baseCommit };
+  const refs = taskBranch(task);
+  if (!refs) {
+    return { ...empty, available: false, reason: "This task ran directly in the project folder, so there is no task branch to compare." };
+  }
+  const cwd = task.sourceRoot ?? projectRoot;
+  const range = [refs.base, refs.branch];
+  try {
+    const statuses = new Map<string, string>();
+    for (const line of git(cwd, ["diff", "--no-renames", "--name-status", ...range, "--"]).toString("utf8").split("\n")) {
+      const [code, path] = line.split("\t");
+      if (code && path) statuses.set(path, code);
+    }
+    const files: TaskChangeFile[] = [];
+    for (const line of git(cwd, ["diff", "--no-renames", "--numstat", ...range, "--"]).toString("utf8").split("\n")) {
+      const [added, deleted, path] = line.split("\t");
+      if (!path) continue;
+      const code = statuses.get(path);
+      files.push({
+        path,
+        status: code === "A" ? "added" : code === "D" ? "deleted" : code === "M" ? "modified" : "changed",
+        additions: added === "-" ? null : Number(added),
+        deletions: deleted === "-" ? null : Number(deleted),
+      });
+    }
+    const patch = git(cwd, ["diff", "--no-renames", "--no-color", "--no-ext-diff", ...range, "--"]);
+    return {
+      ...empty,
+      available: true,
+      files,
+      patch: patch.subarray(0, MAX_PATCH).toString("utf8"),
+      truncated: patch.length > MAX_PATCH,
+    };
+  } catch {
+    return { ...empty, available: false, reason: `The branch ${refs.branch} no longer exists here (it may have been merged and deleted).` };
+  }
+}
+
+/**
+ * Read one file as it is on a task's branch, for previews. The path must be a
+ * plain project-relative path; anything else returns undefined.
+ */
+export function readTaskBranchFile(taskId: string, path: string, projectRoot = process.cwd()): Buffer | undefined {
+  const parts = path.split("/");
+  if (!path || path.length > 400 || parts.some((part) => !part || part === "." || part === ".." || /[\:\0]/.test(part))) {
+    return undefined;
+  }
+  const task = getTask(taskId, projectRoot);
+  const refs = taskBranch(task);
+  if (!refs) return undefined;
+  try {
+    return git(task.sourceRoot ?? projectRoot, ["show", `${refs.branch}:${path}`]);
+  } catch {
+    return undefined;
+  }
 }

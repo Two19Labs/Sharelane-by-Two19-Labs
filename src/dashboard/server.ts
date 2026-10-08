@@ -3,7 +3,30 @@ import type { AddressInfo } from "node:net";
 import { readFileSync } from "node:fs";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { collectDashboardState, collectTaskDetail, readTaskLog } from "./state.js";
+import { extname } from "node:path";
+import {
+  collectDashboardState,
+  collectTaskChanges,
+  collectTaskDetail,
+  readTaskBranchFile,
+  readTaskLog,
+} from "./state.js";
+
+/** Content types for previewing a task's files; anything else is served as text. */
+const previewTypes: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".htm": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
 import { cancelTask, delegateTask, pauseTask, replyToTask, resumeTask } from "../core/tasks.js";
 
 export const DEFAULT_DASHBOARD_PORT = 4317;
@@ -190,7 +213,34 @@ export async function startDashboard(options: {
       sendJson(response, 200, await collectDashboardState(projectRoot));
       return;
     }
-    const taskMatch = /^\/api\/tasks\/([^/]+)(\/log)?$/.exec(url.pathname);
+    const previewMatch = /^\/preview\/([^/]+)\/(.+)$/.exec(url.pathname);
+    if (previewMatch) {
+      const taskId = previewMatch[1] ?? "";
+      let path = "";
+      try {
+        path = decodeURIComponent(previewMatch[2] ?? "");
+      } catch {
+        path = "";
+      }
+      const file = taskIdPattern.test(taskId) ? readTaskBranchFile(taskId, path, projectRoot) : undefined;
+      if (!file) {
+        send(response, 404, "text/plain; charset=utf-8", "That file is not on this task's branch.");
+        return;
+      }
+      // Agent-written pages run in a sandbox with an opaque origin, so they can
+      // never read the control token or call the dashboard's API.
+      response.writeHead(200, {
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy":
+          "sandbox allow-scripts allow-modals allow-pointer-lock; default-src 'self' 'unsafe-inline' data: blob:; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+        "Content-Type": previewTypes[extname(path).toLowerCase()] ?? "text/plain; charset=utf-8",
+      });
+      response.end(file);
+      return;
+    }
+    const taskMatch = /^\/api\/tasks\/([^/]+)(\/log|\/changes)?$/.exec(url.pathname);
     if (taskMatch) {
       const taskId = taskMatch[1] ?? "";
       if (!taskIdPattern.test(taskId)) {
@@ -198,7 +248,9 @@ export async function startDashboard(options: {
         return;
       }
       try {
-        if (taskMatch[2]) {
+        if (taskMatch[2] === "/changes") {
+          sendJson(response, 200, collectTaskChanges(taskId, projectRoot));
+        } else if (taskMatch[2]) {
           const offset = Number(url.searchParams.get("offset") ?? "-1");
           sendJson(response, 200, readTaskLog(taskId, Number.isFinite(offset) ? offset : -1, projectRoot));
         } else {

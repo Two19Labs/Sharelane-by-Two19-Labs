@@ -5,16 +5,28 @@
 .view-tab { border: 0; background: transparent; padding: 5px 14px; border-radius: 7px; cursor: pointer; color: var(--ink-2); }
 .view-tab[aria-pressed="true"] { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
 
-main.office {
-  display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start;
-  max-width: 1600px;
+/* The office uses the whole window: the world is as large as fits both the
+   width and the height left after the top bar, HUD, and hotbar (5:3 ratio). */
+main.office { display: block; max-width: none; padding-top: 12px; padding-bottom: 12px; }
+.office-stage {
+  /* The world and the hotbar share one width: as wide as the window allows
+     while the world (5:3) still fits the height left for it. */
+  --world-w: min(100%, calc((100vh - 190px) * 480 / 288));
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; align-items: center;
 }
-@media (max-width: 1100px) { main.office { grid-template-columns: minmax(0, 1fr); } }
-.office-stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.office-hud { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.hud-project { font-weight: 600; margin-right: 6px; }
+.office-stage > * { width: var(--world-w); min-width: min(100%, 560px); }
+.office-hud {
+  position: absolute; top: 1.2%; left: 1.6%; z-index: 3; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 4px 6px; border-radius: 10px; background: rgba(27, 21, 38, 0.72);
+}
+.office-hud .hud-project { color: #fff8e8; }
+.office-hud .hud-project:hover { background: rgba(255, 255, 255, 0.12); }
+.hud-project {
+  font-weight: 600; margin-right: 6px; border: 0; background: none; padding: 2px 4px; border-radius: 6px; cursor: pointer;
+}
+.hud-project:hover { background: var(--badge-bg); }
 .hud-chip {
-  display: inline-flex; gap: 4px; align-items: baseline; padding: 3px 10px; border-radius: 999px;
+  display: inline-flex; gap: 4px; align-items: baseline; padding: 2px 9px; border-radius: 999px;
   background: var(--surface); border: 1px solid var(--border); font-size: 13px; color: var(--ink-2);
 }
 .hud-chip strong { color: var(--ink); }
@@ -24,7 +36,8 @@ main.office {
 .hud-chip.critical { border-color: var(--critical); background: color-mix(in srgb, var(--critical) 10%, var(--surface)); }
 
 .office-world {
-  position: relative; width: 100%; aspect-ratio: 480 / 288; border-radius: 14px; overflow: hidden;
+  position: relative; aspect-ratio: 480 / 288;
+ border-radius: 14px; overflow: hidden;
   border: 3px solid #2b2238; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); background: #2b2238;
 }
 #office-canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
@@ -106,12 +119,18 @@ main.office {
 .slot.action { background: #2f5d8a; border-color: #4479ad; }
 .office-legend { font-size: 12.5px; text-align: center; }
 
-.office-panel {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px;
-  display: flex; flex-direction: column; gap: 12px; min-width: 0; position: sticky; top: 76px;
-  max-height: calc(100vh - 96px); overflow-y: auto;
+.office-dialog {
+  width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--border);
+  border-radius: 16px; background: var(--surface); color: var(--ink); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
 }
-@media (max-width: 1100px) { .office-panel { position: static; max-height: none; } }
+.office-dialog::backdrop { background: rgba(20, 14, 30, 0.55); }
+.office-dialog[open] { animation: pop 0.14s ease-out; }
+@keyframes pop { from { transform: scale(0.97); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .office-dialog[open] { animation: none; } }
+.office-panel {
+  padding: 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0;
+  max-height: calc(100vh - 50px); overflow-y: auto;
+}
 .office-panel:focus { outline: none; }
 .panel-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .who { display: flex; gap: 10px; align-items: center; }
@@ -171,3 +190,32 @@ main.office {
   .office-sign { display: none; }
   .employee .plate { padding: 2px 4px; }
 }
+
+/* Changes & output */
+.changes { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
+.changes .note { font-size: 13px; color: var(--warning-ink); }
+.report { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--surface); }
+.report h4 { margin: 0 0 4px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.report .text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; max-height: 220px; overflow-y: auto; }
+.changes-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.changes-head .btn { margin-left: auto; text-decoration: none; }
+.plus { color: var(--good-ink); font-weight: 600; }
+.minus { color: var(--critical-ink); font-weight: 600; }
+.files { display: flex; flex-direction: column; gap: 6px; }
+.file-diff { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.file-diff summary { display: flex; align-items: center; gap: 10px; padding: 8px 10px; cursor: pointer; font-size: 13px; }
+.file-path { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.file-count { white-space: nowrap; font-size: 12.5px; }
+.file-status { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 6px; border-radius: 5px; background: var(--badge-bg); color: var(--ink-2); }
+.file-status.added { color: var(--good-ink); }
+.file-status.deleted { color: var(--critical-ink); }
+.preview-link { font-size: 12.5px; font-weight: 600; color: var(--series-1); }
+.diff { margin: 0; padding: 8px 0; max-height: 420px; overflow: auto; font: 12px/1.5 var(--mono); border-top: 1px solid var(--border); background: var(--surface-2); }
+.diff span { display: block; padding: 0 12px; white-space: pre; }
+.diff .add { background: color-mix(in srgb, var(--good) 16%, transparent); }
+.diff .del { background: color-mix(in srgb, var(--critical) 14%, transparent); }
+.diff .hunk { color: var(--series-1); }
+.diff .meta { color: var(--muted); }
+.commands { display: flex; flex-direction: column; gap: 4px; }
+.commands .command, .list .command { display: block; user-select: all; }
+.list .row .command { flex: 1; }

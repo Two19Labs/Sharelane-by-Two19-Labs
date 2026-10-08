@@ -29,15 +29,17 @@
 
   <main id="office-view" class="office" aria-label="Office">
     <div class="office-stage">
-      <div id="office-hud" class="office-hud" aria-label="Team summary"></div>
       <div class="office-world">
         <canvas id="office-canvas" aria-label="Pixel-art office. Each employee is an agent; where they stand shows what they are doing." role="img"></canvas>
         <div id="office-overlay" class="office-overlay"></div>
+        <div id="office-hud" class="office-hud" aria-label="Team summary"></div>
       </div>
       <div id="office-hotbar" class="office-hotbar" role="toolbar" aria-label="Employees and actions"></div>
       <p class="office-legend muted">At a desk: working or paused · Review board: finished, ready for review · Meeting room: needs you · Lounge: free · Sofa: out of allowance</p>
     </div>
-    <aside id="office-panel" class="office-panel" tabindex="-1" aria-label="Employee details" aria-live="polite"></aside>
+    <dialog id="office-dialog" class="office-dialog" aria-label="Details">
+      <div id="office-panel" class="office-panel" tabindex="-1"></div>
+    </dialog>
     <div id="office-toasts" class="toasts"></div>
   </main>
 

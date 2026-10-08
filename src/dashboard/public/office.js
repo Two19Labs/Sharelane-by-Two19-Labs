@@ -46,7 +46,7 @@ const spareLooks = [
 
 // ---------- the floor plan ----------
 const deskSlots = [[2, 4], [6, 4], [10, 4], [14, 4], [2, 9], [6, 9], [10, 9], [14, 9]];
-const reviewSpots = [[3, 14], [4, 14], [5, 14], [6, 14]];
+const reviewSpots = [[3, 14], [6, 14], [4, 15], [7, 15]]; // spaced so name plates do not overlap
 const meetingSpots = [[22, 11], [24, 11], [26, 11], [22, 14], [24, 14], [26, 14]];
 const sofaSpots = [[21, 4], [22, 4], [23, 4]];
 const lounge = { x1: 20, y1: 5, x2: 28, y2: 8 };
@@ -425,6 +425,7 @@ export function createOffice(ui) {
   const canvas = document.getElementById("office-canvas");
   const overlay = document.getElementById("office-overlay");
   const panel = document.getElementById("office-panel");
+  const dialog = document.getElementById("office-dialog");
   const hotbar = document.getElementById("office-hotbar");
   const hud = document.getElementById("office-hud");
   const toasts = document.getElementById("office-toasts");
@@ -705,7 +706,7 @@ export function createOffice(ui) {
     }
     const chip = (label, value, tone) => h("span", { class: `hud-chip ${value ? tone : ""}` }, h("strong", { text: String(value) }), ` ${label}`);
     hud.replaceChildren(
-      h("span", { class: "hud-project", text: state.project.name }),
+      h("button", { class: "hud-project", type: "button", title: "Team overview", onclick: () => select(null, "team") }, state.project.name),
       chip("working", counts.work, "active"),
       chip("paused", counts.paused, "warning"),
       chip("to review", counts.review, "good"),
@@ -756,12 +757,25 @@ export function createOffice(ui) {
     }
   }
 
-  // ---------- side panel ----------
-  let lobby = "team"; // what the panel shows when no employee is selected
+  // ---------- pop-up ----------
+  // The pop-up shows one employee, the assign form ("new"), or a lobby view
+  // (team, review board, notices). Closing it (Close, Esc, or a click on the
+  // dimmed backdrop) clears the selection.
+  let lobby = null;
 
-  function select(name, view = "team") {
+  dialog.addEventListener("close", () => {
+    selected = null;
+    lobby = null;
+    panelFor = null;
+  });
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  const closeButton = () => h("button", { class: "ghost", type: "button", onclick: () => dialog.close() }, "Close");
+
+  function select(name, view = null) {
     selected = name;
-    if (!name) lobby = view;
+    lobby = name ? null : view;
     focusTaskId = null;
     pinnedTask = false;
     detail = null;
@@ -769,8 +783,109 @@ export function createOffice(ui) {
     tab = "conversation";
     panelFor = null;
     refresh();
-    panel.focus({ preventScroll: true });
+    if (selected || lobby) {
+      if (!dialog.open) dialog.showModal();
+      panel.focus({ preventScroll: true });
+    } else if (dialog.open) {
+      dialog.close();
+    }
     if (typeof onChange === "function") onChange();
+  }
+
+  async function showTab(value) {
+    tab = value;
+    for (const button of panel.querySelectorAll("[data-tab]")) button.setAttribute("aria-selected", String(button.dataset.tab === tab));
+    if (value === "output") await loadLog();
+    if (value === "changes") await loadChanges();
+    refresh();
+    if (value === "changes") panel.querySelector('[data-part="tabs"]')?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
+  /** Open an employee's pop-up on one task and tab, e.g. from the review board. */
+  function openTask(agentName, taskId, view) {
+    select(agentName);
+    focusTaskId = taskId;
+    pinnedTask = true;
+    tab = view;
+    panelFor = null;
+    refresh();
+    if (typeof onChange === "function") onChange();
+  }
+
+  // ---------- changes and output ----------
+  let changes = { key: null, data: null };
+
+  async function loadChanges() {
+    const task = state?.tasks.find((candidate) => candidate.id === focusTaskId);
+    if (!task || tab !== "changes") return;
+    const key = `${task.id}|${task.updatedAt}`;
+    if (changes.key === key) return;
+    try {
+      const response = await fetch(`/api/tasks/${encodeURIComponent(task.id)}/changes`);
+      if (response.ok) changes = { key, data: await response.json() };
+    } catch {
+      // Retry on the next refresh.
+    }
+  }
+
+  // Agents reply in Markdown with long file:// links; show the plain words.
+  const plain = (text) => text
+    .replace(/\[([^\]]+)\]\((?:file|https?):[^)]*\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1");
+
+  const previewHref = (taskId, path) => `/preview/${encodeURIComponent(taskId)}/${path.split("/").map(encodeURIComponent).join("/")}`;
+  const isPage = (file) => /\.html?$/i.test(file.path) && file.status !== "deleted";
+
+  function diffBlock(text) {
+    const lines = text.split("\n");
+    return h("pre", { class: "diff" }, lines.map((line) => h("span", {
+      class: line.startsWith("@@") ? "hunk" : line.startsWith("+") && !line.startsWith("+++") ? "add"
+        : line.startsWith("-") && !line.startsWith("---") ? "del" : /^(diff |index |--- |\+\+\+ |new file|deleted file)/.test(line) ? "meta" : "",
+      text: `${line}\n`,
+    })));
+  }
+
+  function changesView(task) {
+    const data = changes.key?.startsWith(`${task.id}|`) ? changes.data : null;
+    if (!data) return [h("p", { class: "muted", text: "Loading changes…" })];
+    const parts = [];
+    if (task.status === "running" || task.status === "queued") {
+      parts.push(h("p", { class: "note", text: "Still working. Changes are saved to the branch when the run finishes or is paused, so this shows the last saved state." }));
+    }
+    if (data.report) {
+      parts.push(h("section", { class: "report" }, h("h4", { text: "Agent's report" }), h("div", { class: "text", text: plain(data.report) })));
+    }
+    if (!data.available) {
+      parts.push(h("p", { class: "muted", text: data.reason }));
+      return parts;
+    }
+    const pages = data.files.filter(isPage);
+    const added = data.files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
+    const removed = data.files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
+    parts.push(h("div", { class: "changes-head" },
+      h("strong", { text: data.files.length ? `${data.files.length} file${data.files.length === 1 ? "" : "s"} changed` : "No changes on the branch yet" }),
+      data.files.length ? h("span", {}, h("span", { class: "plus", text: `+${formatNumber(added)}` }), " ", h("span", { class: "minus", text: `−${formatNumber(removed)}` })) : null,
+      pages.length ? h("a", { class: "btn primary", href: previewHref(task.id, pages.find((file) => /index\.html?$/i.test(file.path))?.path ?? pages[0].path), target: "_blank", rel: "noopener noreferrer" }, "▶ Preview") : null));
+    const sections = new Map();
+    for (const chunk of data.patch.split(/^(?=diff --git )/m)) {
+      const match = /^diff --git a\/.+? b\/(.+)$/m.exec(chunk);
+      if (match) sections.set(match[1], chunk);
+    }
+    parts.push(h("div", { class: "files" }, data.files.map((file) => h("details", { class: "file-diff", open: data.files.length <= 3 },
+      h("summary", {},
+        h("span", { class: `file-status ${file.status}`, text: file.status }),
+        h("span", { class: "file-path mono", text: file.path }),
+        h("span", { class: "file-count" },
+          file.additions === null ? "binary" : [h("span", { class: "plus", text: `+${file.additions}` }), " ", h("span", { class: "minus", text: `−${file.deletions}` })]),
+        isPage(file) ? h("a", { class: "preview-link", href: previewHref(task.id, file.path), target: "_blank", rel: "noopener noreferrer", onclick: (event) => event.stopPropagation() }, "Preview") : null),
+      sections.has(file.path) ? diffBlock(sections.get(file.path)) : h("p", { class: "muted", text: "Diff not shown (too large or binary)." })))));
+    if (data.truncated) parts.push(h("p", { class: "muted", text: "The diff was cut at 400 KB. Use the git command below for the rest." }));
+    parts.push(h("div", { class: "commands" },
+      h("p", { class: "muted", text: "In a terminal in the project folder:" }),
+      h("code", { class: "command", text: `git diff ${data.baseCommit?.slice(0, 7) ?? "main"}..${data.branchName}` }),
+      h("code", { class: "command", text: `git merge ${data.branchName}` })));
+    return parts;
   }
 
   const statusOf = (task) => taskStatus[task.status] ?? { tone: "", icon: "?", label: task.status };
@@ -797,6 +912,9 @@ export function createOffice(ui) {
     }
     if (task.status === "paused") {
       buttons.push(h("button", { class: "btn primary", type: "button", onclick: (event) => act("Resumed.", path("resume"), {}, event.currentTarget) }, "▶ Resume"));
+    }
+    if (task.branchName) {
+      buttons.push(h("button", { class: "btn", type: "button", onclick: () => showTab("changes") }, "🔍 Check output"));
     }
     if (["running", "queued", "paused", "needs_reassignment"].includes(task.status)) {
       buttons.push(h("button", { class: "btn danger", type: "button", onclick: (event) => {
@@ -853,20 +971,22 @@ export function createOffice(ui) {
 
   function lobbyPanel() {
     if (lobby === "notices") {
-      return [h("h2", { text: "Mailbox" }), h("p", { class: "muted", text: "Notices ShareLane sends to agents: handoffs, budget warnings, scope problems." }),
+      return [h("div", { class: "panel-top" }, h("h2", { text: "Mailbox" }), closeButton()), h("p", { class: "muted", text: "Notices ShareLane sends to agents: handoffs, budget warnings, scope problems." }),
         h("ul", { class: "list" }, state.notices.length ? state.notices.slice(0, 15).map((notice) => h("li", {},
           h("div", { class: "row" }, h("strong", { text: notice.kind.replaceAll("_", " ") }), h("span", { class: "meta", text: `${ago(notice.createdAt)} · ${notice.delivered ? "delivered" : "waiting"}` })),
           h("div", { class: "text", text: notice.message }))) : [h("li", { class: "meta", text: "No notices." })])];
     }
     if (lobby === "review") {
       const ready = state.tasks.filter((task) => task.status === "completed" && task.changedFiles.length && task.branchName);
-      return [h("h2", { text: "Review board" }), h("p", { class: "muted", text: "Finished work waits on its own branch. Review it with git before merging." }),
+      return [h("div", { class: "panel-top" }, h("h2", { text: "Review board" }), closeButton()), h("p", { class: "muted", text: "Finished work waits on its own branch. Review it with git before merging." }),
         h("ul", { class: "list" }, ready.length ? ready.slice(0, 12).map((task) => h("li", {},
           h("div", { class: "row" }, h("strong", { text: task.title || task.id }), h("span", { class: "meta", text: `${task.agent} · ${ago(task.finishedAt ?? task.updatedAt)}` })),
           h("div", { class: "meta", text: task.changedFiles.join(", ") }),
-          h("code", { class: "command", text: `git diff main...${task.branchName}` }))) : [h("li", { class: "meta", text: "Nothing waiting for review." })])];
+          h("div", { class: "row" },
+            h("code", { class: "command", text: `git merge ${task.branchName}` }),
+            h("button", { class: "btn", type: "button", onclick: () => openTask(task.agent, task.id, "changes") }, "🔍 Check output")))) : [h("li", { class: "meta", text: "Nothing waiting for review." })])];
     }
-    return [h("h2", { text: "Your team" }), h("p", { class: "muted", text: "Click someone on the floor, or below, to see what they're doing and to direct them." }),
+    return [h("div", { class: "panel-top" }, h("h2", { text: "Your team" }), closeButton()), h("p", { class: "muted", text: "Click someone on the floor, or below, to see what they're doing and to direct them." }),
       h("ul", { class: "team" }, [...employees.values()].map((employee) => h("li", {},
         h("button", { class: "team-row", type: "button", onclick: () => select(employee.name) },
           portrait(employee, 2),
@@ -882,7 +1002,7 @@ export function createOffice(ui) {
     if (selected === "new") {
       if (panelFor !== "new") {
         panelFor = "new";
-        panel.replaceChildren(h("div", { class: "panel-top" }, h("h2", { text: "Assign a task" }), h("button", { class: "ghost", type: "button", onclick: () => select(null) }, "Close")),
+        panel.replaceChildren(h("div", { class: "panel-top" }, h("h2", { text: "Assign a task" }), closeButton()),
           newTaskForm(state.agents[0]?.name));
       }
       return;
@@ -890,7 +1010,12 @@ export function createOffice(ui) {
     const employee = selected ? employees.get(selected) : null;
     if (!employee) {
       panelFor = null;
-      panel.replaceChildren(...lobbyPanel());
+      if (lobby) {
+        // Rebuilt each refresh, so keep the pop-up's scroll position.
+        const top = panel.scrollTop;
+        panel.replaceChildren(...lobbyPanel());
+        panel.scrollTop = top;
+      }
       return;
     }
     if (!pinnedTask) focusTaskId = employee.task?.id ?? null;
@@ -901,7 +1026,7 @@ export function createOffice(ui) {
       panel.replaceChildren(
         h("div", { class: "panel-top" },
           h("div", { class: "who" }, portrait(employee, 3), h("div", {}, h("h2", { text: employee.agent.displayName }), h("p", { class: "muted mono", text: employee.name }))),
-          h("button", { class: "ghost", type: "button", onclick: () => select(null) }, "Close")),
+          closeButton()),
         h("p", { class: "mood", "data-part": "mood" }),
         h("section", { class: "card" }, h("h3", { text: "Allowance" }), h("div", { "data-part": "quota" })),
         task ? h("section", { class: "card" },
@@ -910,14 +1035,9 @@ export function createOffice(ui) {
           h("dl", { class: "facts", "data-part": "facts" }),
           h("div", { class: "controls" }, taskControls(task)),
           composer(task),
-          h("div", { class: "tabs", role: "tablist" }, [["conversation", "Conversation"], ["output", "Live output"]].map(([value, label]) =>
+          h("div", { class: "tabs", role: "tablist", "data-part": "tabs" }, [["conversation", "Conversation"], ["output", "Live output"], ["changes", "Changes & output"]].map(([value, label]) =>
             h("button", { class: "tab", type: "button", role: "tab", "data-tab": value, "aria-selected": String(tab === value),
-              onclick: async () => {
-                tab = value;
-                for (const button of panel.querySelectorAll("[data-tab]")) button.setAttribute("aria-selected", String(button.dataset.tab === tab));
-                if (value === "output") await loadLog();
-                refresh();
-              } }, label))),
+              onclick: () => showTab(value) }, label))),
           h("div", { "data-part": "body" })) : h("section", { class: "card" }, h("p", { class: "muted", text: "No tasks yet." })),
         h("section", { class: "card" }, h("h3", { text: "Task history" }), h("ul", { class: "history", "data-part": "history" })),
         h("details", { class: "card" }, h("summary", { text: `Give ${employee.agent.displayName} a new task` }), newTaskForm(employee.name)));
@@ -936,7 +1056,11 @@ export function createOffice(ui) {
         task.scopeViolations.length ? [h("dt", { text: "Kept off" }), h("dd", { class: "mono", text: task.scopeViolations.join(", ") })] : null,
       ].flat().filter(Boolean));
       const body = part("body");
-      if (tab === "output") {
+      if (tab === "changes") {
+        const box = scrollBox(body, "changes-box", () => h("div", { class: "changes" }));
+        updateKeepingScroll(box, `${changes.key}|${task.status}`, () => box.replaceChildren(...changesView(task)));
+        if (box.dataset.top !== "1") { box.scrollTop = 0; box.dataset.top = "1"; }
+      } else if (tab === "output") {
         const text = log.text || "No output yet. Some agents print everything at the end of a run.";
         const pre = scrollBox(body, "log-box", () => h("pre", { class: "log", "aria-label": "Agent output", tabindex: 0 }));
         updateKeepingScroll(pre, text, () => { pre.textContent = text; });
@@ -946,7 +1070,7 @@ export function createOffice(ui) {
         const signature = `${task.id}|${messages.length}|${messages.at(-1)?.createdAt ?? ""}`;
         updateKeepingScroll(chat, signature, () => chat.replaceChildren(...(messages.length ? messages.map((message) => h("div", { class: `bubble-msg ${message.role}` },
           h("div", { class: "meta", text: `${message.role === "user" ? "Request" : employee.agent.displayName} · ${ago(message.createdAt)}` }),
-          h("div", { class: "text", text: message.content.length > 6000 ? `${message.content.slice(0, 6000)}\n… (${formatNumber(message.content.length - 6000)} more characters in the task file)` : message.content }))) : [h("p", { class: "muted", text: "Loading the conversation…" })])));
+          h("div", { class: "text", text: message.content.length > 6000 ? `${plain(message.content.slice(0, 6000))}\n… (${formatNumber(message.content.length - 6000)} more characters in the task file)` : plain(message.content) }))) : [h("p", { class: "muted", text: "Loading the conversation…" })])));
       }
     }
     const history = agentTasks(state, employee.name).slice(0, 10);
@@ -1018,6 +1142,7 @@ export function createOffice(ui) {
         if (employee && !pinnedTask) focusTaskId = employee.task?.id ?? null;
         await loadDetail();
         await loadLog();
+        await loadChanges();
       }
       refresh();
     },

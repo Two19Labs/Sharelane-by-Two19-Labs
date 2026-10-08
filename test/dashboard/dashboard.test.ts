@@ -166,6 +166,15 @@ test("the server is local-only, read-only, and strict about what it serves", asy
   assert.equal(detail.messages[0].role, "user");
   const log = JSON.parse((await get(`/api/tasks/${taskId}/log?offset=-1`)).body);
   assert.match(log.text, /ShareLane run: fake/);
+
+  // This project is not a Git repository, so there is no branch to compare or preview.
+  const changes = JSON.parse((await get(`/api/tasks/${taskId}/changes`)).body);
+  assert.equal(changes.available, false);
+  assert.match(changes.reason, /no task branch/);
+  assert.match(changes.report, /Codex heard/, "the agent's own report is still shown");
+  assert.equal((await get(`/preview/${taskId}/index.html`)).status, 404);
+  assert.equal((await get(`/preview/${taskId}/..%2F..%2Fpackage.json`)).status, 404);
+  assert.equal((await get("/preview/not-a-task/index.html")).status, 404);
 });
 
 test("controls need the page's token and origin, then assign, pause, resume, reply to, and stop tasks", async () => {
