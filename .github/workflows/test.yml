@@ -1,0 +1,32 @@
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # Tests create Git repositories and commit in them.
+      - run: |
+          git config --global user.name "ShareLane CI"
+          git config --global user.email "ci@sharelane.invalid"
+          git config --global init.defaultBranch main
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test

@@ -4,14 +4,14 @@ These instructions apply to every agent working anywhere in this repository.
 
 ## Before starting work
 
-1. Read the **Current snapshot** and newest relevant work-log entry in `GLOBAL_CONTEXT.md`. Read older entries only when the task needs that history.
+1. The maintainers keep a private work log in `private/` (ignored by Git, so it exists only on their machines). If `private/GLOBAL_CONTEXT.md` exists, read its **Current snapshot** and newest relevant work-log entry; read older entries only when the task needs that history.
 2. If you need broader project context, use headings or search to read only the relevant sections of these files, in order:
-   1. `docs/HANDOFF.md`
+   1. `private/HANDOFF.md` (if present)
    2. `docs/DESIGN.md`
    3. `docs/DECISIONS.md`
-   4. `docs/IMPLEMENTATION_PLAN.md`
+   4. `private/IMPLEMENTATION_PLAN.md` (if present)
 3. Check `git status` before editing. Existing changes may belong to the user or another agent; do not overwrite them.
-4. Explain the next small step in plain language before doing it. This is a learning project for a nontechnical owner.
+4. Explain the next small step in plain language before doing it.
 
 ## Token-efficiency policy
 
@@ -32,7 +32,7 @@ These instructions apply to every agent working anywhere in this repository.
 
 ## Before finishing or handing off
 
-Update `GLOBAL_CONTEXT.md` as the final project edit of every work session, even if the task is incomplete or blocked. Append one entry to **Agent work log** using its template. Include:
+If `private/GLOBAL_CONTEXT.md` exists, update it as the final project edit of every work session, even if the task is incomplete or blocked, and commit it in the `private/` repository (never in the main one). Append one entry to **Agent work log** using its template. Include:
 
 - date and agent name;
 - goal of the session;

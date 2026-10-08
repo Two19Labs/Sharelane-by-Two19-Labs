@@ -26,3 +26,6 @@ Thumbs.db
 
 # Claude Code agent worktrees (temporary)
 .claude/worktrees/
+
+# Maintainers' private work log and audits (kept out of the public repository)
+/private/
