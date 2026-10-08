@@ -29,15 +29,16 @@ test("each shipped agent maps tiers to real model flags in new and resumed runs"
   assert.ok(args("claude", "strong", "s1").includes("opus"), "resumed runs keep the tier");
 
   const codex = args("codex", "strong");
+  assert.deepEqual(codex.slice(codex.indexOf("-m"), codex.indexOf("-m") + 2), ["-m", "gpt-6-astra"]);
   assert.ok(codex.includes('model_reasoning_effort="high"'));
-  assert.ok(!codex.includes("-m"), "Codex keeps the model from its own config");
   const codexResume = args("codex", "fast", "s1");
-  assert.ok(codexResume.indexOf('model_reasoning_effort="low"') < codexResume.indexOf("resume"), "options come before the resume subcommand");
+  assert.ok(codexResume.includes("gpt-6-luna"));
+  assert.ok(codexResume.indexOf("-m") < codexResume.indexOf("resume"), "options come before the resume subcommand");
 
   assert.ok(args("antigravity", "balanced").includes("gemini-3.8-flash-high"));
 
   const plain = buildAgentCommand("claude", "do it", undefined, registry).args;
   assert.ok(!plain.includes("--model"), "no tier means no model flag: the agent's own default");
-  assert.equal(describeModel(modelForTier(getAgentAdapter("codex", registry), "fast")), "low effort");
+  assert.equal(describeModel(modelForTier(getAgentAdapter("codex", registry), "balanced")), "gpt-6.1-sol · medium effort");
   assert.equal(describeModel(undefined), "agent default");
 });

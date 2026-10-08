@@ -96,12 +96,11 @@ agents:
         - sandbox_workspace_write.exclude_tmpdir_env_var=true
         - -c
         - sandbox_workspace_write.exclude_slash_tmp=true
-    # Codex keeps the model set in ~/.codex/config.toml; tiers change how hard
-    # it thinks. Add "model:" to a tier to switch models as well.
+    # Codex models from strongest: Astra, Sol, Luna (see ~/.codex/models_cache.json).
     tiers:
-      fast: { effort: low }
-      balanced: { effort: medium }
-      strong: { effort: high }
+      fast: { model: gpt-6-luna, effort: medium }
+      balanced: { model: gpt-6.1-sol, effort: medium }
+      strong: { model: gpt-6-astra, effort: high }
     modelFlags:
       model: ["-m", "{value}"]
       effort: ["-c", "model_reasoning_effort=\"{value}\""]

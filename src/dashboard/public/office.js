@@ -1058,7 +1058,7 @@ export function createOffice(ui) {
     h("label", {}, h("span", { text: "Who" }), agentSelect),
     h("label", {}, h("span", { text: "Task" }), prompt),
     h("label", {}, h("span", { text: "Allowed files" }), scope, h("small", { class: "muted", text: "Leave empty to allow the whole project. Patterns are separated by commas." })),
-    h("label", {}, h("span", { text: "Model" }), tier, h("small", { class: "muted", text: "ShareLane maps this to each agent's model: Claude Haiku / Sonnet / Opus, Antigravity Gemini Flash / Pro, Codex low / medium / high effort." })),
+    h("label", {}, h("span", { text: "Model" }), tier, h("small", { class: "muted", text: "ShareLane maps this to each agent's model: Claude Haiku / Sonnet / Opus, Antigravity Gemini Flash / Pro, Codex Luna / Sol / Astra." })),
     h("label", {}, h("span", { text: "Token budget" }), budget),
     h("div", { class: "row" }, h("span", { class: "muted", text: "They work on their own branch. Nothing is merged without you." }), submit));
   }
