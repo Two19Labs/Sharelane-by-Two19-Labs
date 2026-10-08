@@ -937,22 +937,52 @@ export function createOffice(ui) {
       ].flat().filter(Boolean));
       const body = part("body");
       if (tab === "output") {
-        const pre = h("pre", { class: "log", "aria-label": "Agent output", text: log.text || "No output yet. Some agents print everything at the end of a run." });
-        body.replaceChildren(pre);
-        requestAnimationFrame(() => { pre.scrollTop = pre.scrollHeight; });
+        const text = log.text || "No output yet. Some agents print everything at the end of a run.";
+        const pre = scrollBox(body, "log-box", () => h("pre", { class: "log", "aria-label": "Agent output", tabindex: 0 }));
+        updateKeepingScroll(pre, text, () => { pre.textContent = text; });
       } else {
         const messages = detail?.task.id === task.id ? detail.messages : [];
-        body.replaceChildren(h("div", { class: "chat" }, messages.length ? messages.map((message) => h("div", { class: `bubble-msg ${message.role}` },
+        const chat = scrollBox(body, "chat-box", () => h("div", { class: "chat", tabindex: 0, "aria-label": "Conversation" }));
+        const signature = `${task.id}|${messages.length}|${messages.at(-1)?.createdAt ?? ""}`;
+        updateKeepingScroll(chat, signature, () => chat.replaceChildren(...(messages.length ? messages.map((message) => h("div", { class: `bubble-msg ${message.role}` },
           h("div", { class: "meta", text: `${message.role === "user" ? "Request" : employee.agent.displayName} · ${ago(message.createdAt)}` }),
-          h("div", { class: "text", text: message.content.length > 6000 ? `${message.content.slice(0, 6000)}\n… (${formatNumber(message.content.length - 6000)} more characters in the task file)` : message.content }))) : [h("p", { class: "muted", text: "Loading the conversation…" })]));
+          h("div", { class: "text", text: message.content.length > 6000 ? `${message.content.slice(0, 6000)}\n… (${formatNumber(message.content.length - 6000)} more characters in the task file)` : message.content }))) : [h("p", { class: "muted", text: "Loading the conversation…" })])));
       }
     }
     const history = agentTasks(state, employee.name).slice(0, 10);
-    part("history").replaceChildren(...(history.length ? history.map((item) => h("li", {},
+    const historyList = part("history");
+    const historyKey = `${task?.id}|${history.map((item) => `${item.id}:${item.status}:${item.updatedAt}`).join(",")}|${Math.floor(Date.now() / 60_000)}`;
+    if (historyList.dataset.signature === historyKey) return;
+    historyList.dataset.signature = historyKey;
+    historyList.replaceChildren(...(history.length ? history.map((item) => h("li", {},
       h("button", { class: `history-row${item.id === task?.id ? " current" : ""}`, type: "button", onclick: () => {
         focusTaskId = item.id; pinnedTask = true; detail = null; log = { taskId: null, offset: -1, text: "" }; panelFor = null;
         if (typeof onChange === "function") onChange();
       } }, statusPill(statusOf(item)), h("span", { class: "history-title", text: item.title || item.id }), h("span", { class: "meta", text: ago(item.updatedAt) })))) : [h("li", { class: "meta", text: "Nothing yet." })]));
+  }
+
+  // Scrollable boxes are kept between refreshes (a new element would reset the
+  // reader's scroll position every 2 seconds) and only change when their
+  // content does. They follow new content only if the reader was at the bottom.
+  function scrollBox(container, kind, create) {
+    const current = container.firstElementChild;
+    if (current?.dataset.box === kind) return current;
+    const box = create();
+    box.dataset.box = kind;
+    box.dataset.fresh = "1";
+    container.replaceChildren(box);
+    return box;
+  }
+
+  function updateKeepingScroll(box, signature, update) {
+    if (box.dataset.signature === signature) return;
+    const fresh = box.dataset.fresh === "1";
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 24;
+    const previousTop = box.scrollTop;
+    box.dataset.signature = signature;
+    delete box.dataset.fresh;
+    update();
+    box.scrollTop = fresh || atBottom ? box.scrollHeight : previousTop;
   }
 
   async function loadDetail() {

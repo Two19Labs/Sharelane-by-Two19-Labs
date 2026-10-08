@@ -303,7 +303,9 @@ function renderDetail() {
       h("div", { class: "log-tools" },
         h("span", { text: task.status === "running" || task.status === "queued" ? "Live — refreshes every 2 seconds" : "This run has finished" }),
         h("label", {}, h("input", { type: "checkbox", checked: view.log.follow, onchange: (event) => { view.log.follow = event.target.checked; } }), " Follow output")));
-    if (view.log.follow) requestAnimationFrame(() => { pre.scrollTop = pre.scrollHeight; });
+    // The panel is rebuilt every refresh; keep the reader's place unless following.
+    const previousTop = container.querySelector(".log")?.scrollTop ?? 0;
+    requestAnimationFrame(() => { pre.scrollTop = view.log.follow ? pre.scrollHeight : previousTop; });
   } else if (view.tab === "conversation") {
     body = h("div", {}, detail.messages.map((message) => h("div", { class: "message" },
       h("h4", { text: `${message.role === "user" ? "Request" : "Agent reply"} · ${ago(message.createdAt)}` }),
