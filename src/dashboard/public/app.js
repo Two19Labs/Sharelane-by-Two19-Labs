@@ -2,6 +2,7 @@
 // prompts and agent output can never inject markup. The office view (office.js)
 // is the default; the details view is the full tables-and-charts dashboard.
 import { createOffice } from "./office.js";
+import { markdown } from "./render.js";
 
 const REFRESH_MS = 2000;
 const SVG = "http://www.w3.org/2000/svg";
@@ -309,7 +310,7 @@ function renderDetail() {
   } else if (view.tab === "conversation") {
     body = h("div", {}, detail.messages.map((message) => h("div", { class: "message" },
       h("h4", { text: `${message.role === "user" ? "Request" : "Agent reply"} · ${ago(message.createdAt)}` }),
-      h("pre", { text: message.content.length > 4000 ? `${message.content.slice(0, 4000)}\n… (${formatNumber(message.content.length - 4000)} more characters in the task file)` : message.content }))));
+      markdown(h, message.content.length > 12000 ? `${message.content.slice(0, 12000)}\n\n… (${formatNumber(message.content.length - 12000)} more characters in the task file)` : message.content))));
   } else {
     body = h("pre", { class: "log", text: detail.handoffNote });
   }

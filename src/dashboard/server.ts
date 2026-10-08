@@ -38,6 +38,7 @@ const assets: Record<string, { file: string; type: string }> = {
   "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
   "/office.js": { file: "office.js", type: "text/javascript; charset=utf-8" },
   "/office.css": { file: "office.css", type: "text/css; charset=utf-8" },
+  "/render.js": { file: "render.js", type: "text/javascript; charset=utf-8" },
 };
 const taskIdPattern = /^task-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 

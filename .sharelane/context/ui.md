@@ -2,15 +2,15 @@
 title: User interface
 read-when: Changing screens, interactions, dashboard behavior, the office view, visual design, or examples/calculator.
 covers-files: ["examples/calculator/**","src/dashboard/**"]
-updated-at: 2026-10-08T07:47:29.025Z
-source-hash: 67a04024e181c382677bf9316ce87700752da37f16aef24a3123faf3c02185d4
+updated-at: 2026-10-08T07:52:27.586Z
+source-hash: b262a3f963ce5bcaca48f746c2c9f6a194e295e40091fbd5770d6ed6369914a8
 ---
 
 # User interface
 
 ## ShareLane dashboard
 
-`npx sharelane dashboard [--port 4317] [--open]` serves a local page. `src/dashboard/state.ts` collects the snapshot; `src/dashboard/server.ts` serves it with Node's `http` module; `src/dashboard/public/` holds `index.html`, `app.css` (colour role tokens, separately selected dark values for the OS setting and the theme toggle), `app.js` (Details view + polling every 2 s, paused while hidden), and `office.js` + `office.css` (the default Office view). A top switch toggles Office / Details (remembered in localStorage); `/#task=<id>` opens Details on that task.
+`npx sharelane dashboard [--port 4317] [--open]` serves a local page. `src/dashboard/state.ts` collects the snapshot; `src/dashboard/server.ts` serves it with Node's `http` module; `src/dashboard/public/` holds `index.html`, `app.css` (colour role tokens, separately selected dark values for the OS setting and the theme toggle), `app.js` (Details view + polling every 2 s, paused while hidden), `office.js` + `office.css` (the default Office view), and `render.js` (readable agent text). A top switch toggles Office / Details (remembered in localStorage); `/#task=<id>` opens Details on that task.
 
 ### Office view (decisions 71–74)
 
@@ -20,7 +20,8 @@ source-hash: 67a04024e181c382677bf9316ce87700752da37f16aef24a3123faf3c02185d4
 - All text is in DOM overlays (`#office-overlay`): an employee is a `<button>` with a speech bubble and name plate positioned in % of the world; signs; hotspots (your desk = assign, review board, mailbox = notices). The bottom hotbar repeats employees plus New task / Notices.
 - Clicking opens a modal pop-up (`<dialog id="office-dialog">` holding `#office-panel`; Close, Esc, or a backdrop click closes it and clears the selection). It shows a lobby view (team, review board with a Check output button per task, notices) or one employee: status line, allowance meters, current task facts, controls, a composer, Conversation / Live output / Changes & output tabs, task history, and a "give a new task" form. The skeleton is rebuilt only when the employee, focused task, or its status changes, so typing is never interrupted; scroll boxes are kept between refreshes (`scrollBox`, `updateKeepingScroll`).
 - Controls: Pause and Stop (running/queued), Resume or Resume with note (paused), Send follow-up (completed), Stop (needs_reassignment), and **Check output** (any task with a branch). Stop asks for confirmation.
-- Changes & output: the agent's last reply (Markdown links, bold, and code ticks stripped by `plain`), files changed with +/− counts and colour-coded per-file diffs, a Preview button for HTML files, and the `git diff` / `git merge` commands.
+- Conversation: chat bubbles ("You asked" / "Follow-up" / the agent's name) with Markdown rendered. Live output: `parseRunLog` turns the raw run log (Claude json and stream-json, Codex jsonl, Antigravity json) into a timeline — run started/finished lines, agent messages, thinking, tool cards (commands with exit codes, file changes, blocked actions in red), stats chips (time, turns, tokens, cost), problems, collapsed stderr — with the raw output kept under "Show raw output". Changes & output: the agent's report (Markdown), files changed with +/− counts and colour-coded per-file diffs, a Preview button for HTML files, and the `git diff` / `git merge` commands.
+- `render.js` builds everything with `h()`; agent text is never parsed as HTML. Web links open in a new tab; `file://` links show only their label. It is unit-tested in `test/dashboard/render.test.ts`.
 
 ### API
 

@@ -4,6 +4,8 @@
 // or assign work. The art is drawn in code (no image files), and every text
 // goes in through text nodes, never markup.
 
+import { markdown, parseRunLog, renderTimeline } from "./render.js";
+
 const T = 16; // tile size in world pixels
 const COLS = 30;
 const ROWS = 18;
@@ -828,12 +830,6 @@ export function createOffice(ui) {
     }
   }
 
-  // Agents reply in Markdown with long file:// links; show the plain words.
-  const plain = (text) => text
-    .replace(/\[([^\]]+)\]\((?:file|https?):[^)]*\)/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/`([^`]+)`/g, "$1");
-
   const previewHref = (taskId, path) => `/preview/${encodeURIComponent(taskId)}/${path.split("/").map(encodeURIComponent).join("/")}`;
   const isPage = (file) => /\.html?$/i.test(file.path) && file.status !== "deleted";
 
@@ -854,7 +850,7 @@ export function createOffice(ui) {
       parts.push(h("p", { class: "note", text: "Still working. Changes are saved to the branch when the run finishes or is paused, so this shows the last saved state." }));
     }
     if (data.report) {
-      parts.push(h("section", { class: "report" }, h("h4", { text: "Agent's report" }), h("div", { class: "text", text: plain(data.report) })));
+      parts.push(h("section", { class: "report" }, h("h4", { text: "Agent's report" }), markdown(h, data.report)));
     }
     if (!data.available) {
       parts.push(h("p", { class: "muted", text: data.reason }));
@@ -1061,16 +1057,23 @@ export function createOffice(ui) {
         updateKeepingScroll(box, `${changes.key}|${task.status}`, () => box.replaceChildren(...changesView(task)));
         if (box.dataset.top !== "1") { box.scrollTop = 0; box.dataset.top = "1"; }
       } else if (tab === "output") {
-        const text = log.text || "No output yet. Some agents print everything at the end of a run.";
-        const pre = scrollBox(body, "log-box", () => h("pre", { class: "log", "aria-label": "Agent output", tabindex: 0 }));
-        updateKeepingScroll(pre, text, () => { pre.textContent = text; });
+        // The raw log becomes a timeline: messages, tool cards, run info, problems.
+        const timeline = scrollBox(body, "timeline-box", () => h("div", { class: "chat timeline", tabindex: 0, "aria-label": "Agent output" }));
+        updateKeepingScroll(timeline, `${task.id}|${log.text.length}`, () => timeline.replaceChildren(...(log.text
+          ? renderTimeline(h, parseRunLog(log.text), { agentName: employee.agent.displayName, ago })
+          : [h("p", { class: "muted", text: task.status === "running" || task.status === "queued"
+            ? "Waiting for output. Some agents (like Antigravity) print everything at the end of a run."
+            : "No output was recorded for this run." })])));
       } else {
         const messages = detail?.task.id === task.id ? detail.messages : [];
         const chat = scrollBox(body, "chat-box", () => h("div", { class: "chat", tabindex: 0, "aria-label": "Conversation" }));
         const signature = `${task.id}|${messages.length}|${messages.at(-1)?.createdAt ?? ""}`;
-        updateKeepingScroll(chat, signature, () => chat.replaceChildren(...(messages.length ? messages.map((message) => h("div", { class: `bubble-msg ${message.role}` },
-          h("div", { class: "meta", text: `${message.role === "user" ? "Request" : employee.agent.displayName} · ${ago(message.createdAt)}` }),
-          h("div", { class: "text", text: message.content.length > 6000 ? `${plain(message.content.slice(0, 6000))}\n… (${formatNumber(message.content.length - 6000)} more characters in the task file)` : plain(message.content) }))) : [h("p", { class: "muted", text: "Loading the conversation…" })])));
+        const asker = task.callerAgent && task.callerAgent !== "you" ? `${task.callerAgent} asked` : "You asked";
+        updateKeepingScroll(chat, signature, () => chat.replaceChildren(...(messages.length ? messages.map((message, index) => h("div", { class: `bubble-msg ${message.role}` },
+          h("div", { class: "meta", text: `${message.role === "user" ? (index === 0 ? asker : "Follow-up") : employee.agent.displayName} · ${ago(message.createdAt)}` }),
+          markdown(h, message.content.length > 12000
+            ? `${message.content.slice(0, 12000)}\n\n… (${formatNumber(message.content.length - 12000)} more characters in the task file)`
+            : message.content))) : [h("p", { class: "muted", text: "Loading the conversation…" })])));
       }
     }
     const history = agentTasks(state, employee.name).slice(0, 10);
