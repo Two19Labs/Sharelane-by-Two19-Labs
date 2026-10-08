@@ -1,23 +1,35 @@
 ---
 title: User interface
-read-when: Changing screens, interactions, dashboard behavior, visual design, or examples/calculator.
+read-when: Changing screens, interactions, dashboard behavior, the office view, visual design, or examples/calculator.
 covers-files: ["examples/calculator/**","src/dashboard/**"]
-updated-at: 2026-10-03T05:21:46.069Z
-source-hash: 02f7b365aa2bca67b262ae936b8df01868b49f48c3d47ebe87024022a8721e12
+updated-at: 2026-10-08T06:52:12.618Z
+source-hash: cbae2a5bec79cf32e37089633e079c8f3f3d900ad24befa563d1ecc63b0b0c8e
 ---
 
 # User interface
 
-## ShareLane dashboard (Phase 6)
+## ShareLane dashboard
 
-`npm run sharelane -- dashboard [--port 4317] [--open]` serves a read-only local page. `src/dashboard/state.ts` collects the snapshot; `src/dashboard/server.ts` serves it with Node's `http` module; `src/dashboard/public/` holds `index.html`, `app.css` (colour role tokens, separately selected dark values for the OS setting and the theme toggle), and `app.js` (renders with text nodes only; polls `/api/state` every 2 s and pauses when hidden).
+`npx sharelane dashboard [--port 4317] [--open]` serves a local page. `src/dashboard/state.ts` collects the snapshot; `src/dashboard/server.ts` serves it with Node's `http` module; `src/dashboard/public/` holds `index.html`, `app.css` (colour role tokens, separately selected dark values for the OS setting and the theme toggle), `app.js` (Details view + polling every 2 s, paused while hidden), and `office.js` + `office.css` (the default Office view). A top switch toggles Office / Details (remembered in localStorage); `/#task=<id>` opens Details on that task.
 
-- Sections: headline tiles; agent cards with allowance meters and the 7% marker (faded with "~" when the reading is too old); a task table (status pill, request, agent path, scope, tokens, budget meter) with a detail panel (facts, live output by byte offset, conversation, handoff note); claims with countdowns; notices; progress notes; tokens by agent (a stacked bar using validated categorical slots 1–3, plus a table view); and a context-map SVG graph (MAP → chunks → covered files, with stale flags).
-- Rules: every status is an icon plus a label; text uses ink tokens, never series colours; the CSP forbids inline scripts and style attributes, so styles are set through the CSSOM (`element.style.cssText`). `/#task=<id>` opens a task directly.
-- API: `GET /api/state`, `GET /api/tasks/<id>`, `GET /api/tasks/<id>/log?offset=<n>` (`-1` = tail). Only `localhost`/`127.0.0.1` Host headers are answered; everything is GET-only.
-- Verify visually with headless Edge (`msedge --headless=new --screenshot`); desktop Edge lays out at no less than about 500px wide.
+### Office view (decisions 71–73)
 
-Later phases plan a VS Code panel and an animated office view.
+- A pixel-art floor drawn in code on a canvas (world 30×18 tiles of 16 px, drawn at 2×; people and their chair backs at 3× via `withSprite`). No image files.
+- Each agent is an employee. `primaryTask` + `modeFor` decide its state and where it walks (BFS on a blocked-tile grid): desk = working (monitor shows code) or paused (Zz); review board = completed with changed files in the last 6 h; meeting room = needs_reassignment / failed / orphaned in the last 6 h; sofa = allowance at handoff; lounge = free (wanders). On page load everyone starts in place; later changes are walked.
+- All text is in DOM overlays (`#office-overlay`): an employee is a `<button>` with a speech bubble and name plate positioned in % of the world; signs; hotspots (your desk = assign, review board, mailbox = notices). The bottom hotbar repeats employees plus New task / Notices.
+- The side panel (`#office-panel`) shows the lobby (team list, review board list with `git diff main...<branch>`, or notices) or one employee: status line, allowance meters, current task facts, controls, a composer, Conversation / Live output tabs, task history (click to focus another task), and a "give a new task" form. The skeleton is rebuilt only when the employee, focused task, or its status changes, so typing is never interrupted.
+- Controls: Pause and Stop (running/queued), Resume or Resume with note (paused), Send follow-up (completed), Stop (needs_reassignment). Stop asks for confirmation.
+
+### API
+
+- `GET /api/state`, `GET /api/tasks/<id>`, `GET /api/tasks/<id>/log?offset=<n>` (`-1` = tail), `GET /api/session` (the control token).
+- `POST /api/tasks` `{agent, prompt, scope?, budgetTokens?}` (caller `you`; scope is comma/line separated), `POST /api/tasks/<id>/{pause,resume,stop,reply}` (`resume` takes an optional `message`, `reply` a required one). A POST needs header `X-ShareLane-Token`, an `Origin` of this server, and `Content-Type: application/json`; failures are 403/415, task-state conflicts 409.
+- Only `localhost`/`127.0.0.1` Host headers are answered. `startDashboard({ env })` passes an environment to task workers started from the page (used by tests).
+
+### Rules
+
+- Every status is an icon plus a label; the CSP forbids inline scripts and style attributes, so styles are set through the CSSOM (`element.style.cssText`). Render with text nodes only.
+- Verify visually with headless Edge; a scripted DevTools-protocol helper can click buttons (used to prove Pause works end to end). Desktop Edge lays out at no less than about 500px wide.
 
 ## Calculator learning example
 

@@ -20,6 +20,7 @@ const fixturePath = join(dirname(fileURLToPath(import.meta.url)), "..", "fixture
 let projectRoot: string;
 let taskId: string;
 let dashboard: RunningDashboard;
+const workerEnv: NodeJS.ProcessEnv = {};
 const previousConfig = process.env.SHARELANE_AGENTS_CONFIG;
 
 before(async () => {
@@ -43,6 +44,7 @@ before(async () => {
     "utf8",
   );
   process.env.SHARELANE_AGENTS_CONFIG = configPath;
+  workerEnv.SHARELANE_AGENTS_CONFIG = configPath;
   const delegated = delegateTask({
     agent: "fake",
     callerAgent: "test",
@@ -56,7 +58,7 @@ before(async () => {
   createNotice({ projectRoot, recipientAgent: "claude", kind: "handoff", message: "A task was handed over." });
   logProgress(taskId, "Halfway there", "fake", projectRoot);
   clearDashboardCache();
-  dashboard = await startDashboard({ projectRoot, port: 0 });
+  dashboard = await startDashboard({ projectRoot, port: 0, env: workerEnv });
 });
 
 after(async () => {
@@ -66,7 +68,7 @@ after(async () => {
   await rm(projectRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
-function get(path: string, headers: Record<string, string> = {}, method = "GET") {
+function get(path: string, headers: Record<string, string> = {}, method = "GET", body?: string) {
   return new Promise<{ status: number; headers: Record<string, unknown>; body: string }>((resolve, reject) => {
     const outgoing = request(
       { host: "127.0.0.1", port: dashboard.port, path, method, headers: { host: `localhost:${dashboard.port}`, ...headers } },
@@ -78,7 +80,7 @@ function get(path: string, headers: Record<string, string> = {}, method = "GET")
       },
     );
     outgoing.on("error", reject);
-    outgoing.end();
+    outgoing.end(body);
   });
 }
 
@@ -151,7 +153,10 @@ test("the server is local-only, read-only, and strict about what it serves", asy
   assert.equal(JSON.parse(state.body).tasks[0].id, taskId);
 
   assert.equal((await get("/api/state", { host: "evil.example" })).status, 403, "DNS-rebinding host refused");
-  assert.equal((await get("/api/state", {}, "POST")).status, 405);
+  assert.equal((await get("/api/state", {}, "POST")).status, 403, "controls need the page token");
+  assert.equal((await get("/api/state", {}, "DELETE")).status, 405);
+  assert.equal((await get("/office.js")).status, 200);
+  assert.equal((await get("/office.css")).status, 200);
   assert.equal((await get("/api/tasks/..%2F..%2Fsecrets/log")).status, 404);
   assert.equal((await get("/api/tasks/task-00000000-0000-0000-0000-000000000000")).status, 404);
   assert.equal((await get("/nope")).status, 404);
@@ -161,4 +166,52 @@ test("the server is local-only, read-only, and strict about what it serves", asy
   assert.equal(detail.messages[0].role, "user");
   const log = JSON.parse((await get(`/api/tasks/${taskId}/log?offset=-1`)).body);
   assert.match(log.text, /ShareLane run: fake/);
+});
+
+test("controls need the page's token and origin, then assign, pause, resume, reply to, and stop tasks", async () => {
+  const token = JSON.parse((await get("/api/session")).body).token as string;
+  assert.match(token, /^[0-9a-f]{48}$/);
+  const origin = `http://localhost:${dashboard.port}`;
+  const post = async (path: string, body: unknown, headers: Record<string, string> = {}) => {
+    const response = await get(path, { "content-type": "application/json", origin, "x-sharelane-token": token, ...headers }, "POST", JSON.stringify(body));
+    return { status: response.status, body: JSON.parse(response.body) as { taskId?: string; status?: string; error?: string } };
+  };
+
+  assert.equal((await post(`/api/tasks/${taskId}/stop`, {}, { "x-sharelane-token": "wrong" })).status, 403);
+  assert.equal((await post(`/api/tasks/${taskId}/stop`, {}, { origin: "http://evil.example" })).status, 403, "another website is refused");
+  assert.equal((await post(`/api/tasks/${taskId}/stop`, {}, { "content-type": "text/plain" })).status, 415, "a simple form post is refused");
+  assert.equal((await post("/api/tasks", { agent: "fake", prompt: "x", budgetTokens: -5 })).status, 409);
+  assert.equal((await post(`/api/tasks/${taskId}/stop`, {})).status, 409, "a completed task cannot be stopped");
+
+  workerEnv.FAKE_AGENT_DELAY_MS = "5000";
+  let slowId = "";
+  try {
+    const assigned = await post("/api/tasks", { agent: "fake", prompt: "slow office work", budgetTokens: 100000 });
+    assert.equal(assigned.status, 200, assigned.body.error ?? "");
+    slowId = assigned.body.taskId ?? "";
+    assert.equal(getTask(slowId, projectRoot).callerAgent, "you");
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline && !(getTask(slowId, projectRoot).status === "running" && getTask(slowId, projectRoot).agentPid)) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const paused = await post(`/api/tasks/${slowId}/pause`, {});
+    assert.equal(paused.body.status, "paused", paused.body.error ?? "");
+  } finally {
+    delete workerEnv.FAKE_AGENT_DELAY_MS;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(getTask(slowId, projectRoot).status, "paused", "a paused task stays paused");
+  assert.equal((await post(`/api/tasks/${slowId}/pause`, {})).status, 409);
+
+  const resumed = await post(`/api/tasks/${slowId}/resume`, { message: "Also add a changelog line." });
+  assert.equal(resumed.status, 200, resumed.body.error ?? "");
+  const finished = await waitForTask(slowId, 30_000, projectRoot);
+  assert.equal(finished.task.status, "completed", finished.task.error ?? "");
+  assert.match(finished.task.result ?? "", /You were paused partway through this task/);
+  assert.match(finished.task.result ?? "", /The task:\nslow office work/, "a fresh run gets the original request again");
+  assert.match(finished.task.result ?? "", /Also add a changelog line\./);
+
+  const replied = await post(`/api/tasks/${slowId}/reply`, { message: "thanks" });
+  assert.equal(replied.status, 200, replied.body.error ?? "");
+  assert.equal((await waitForTask(slowId, 30_000, projectRoot)).task.result, "Codex heard: thanks");
 });

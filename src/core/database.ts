@@ -34,33 +34,33 @@ const taskColumns: Record<string, string> = {
   handoff_reason: "TEXT",
 };
 
-const oldStatusCheck = "('queued', 'running', 'completed', 'failed', 'cancelled')";
-const newStatusCheck =
-  "('queued', 'running', 'completed', 'failed', 'cancelled', 'needs_reassignment')";
+const statusCheckPattern = /status TEXT NOT NULL CHECK \(status IN \([^)]*\)\)/;
+const newStatusCheck = statusCheckPattern.exec(schema)?.[0] ?? "";
 
 /**
- * SQLite cannot change a CHECK constraint in place, so a pre-version-5 tasks
- * table is rebuilt once to accept the needs_reassignment status. Foreign keys
+ * SQLite cannot change a CHECK constraint in place, so an older tasks table is
+ * rebuilt once to accept newer statuses (needs_reassignment in version 5,
+ * paused in version 6). Foreign keys
  * are switched off around the copy so dropping the old table cannot cascade
  * into messages, lineage, claims, notices, or runs.
  */
-function allowReassignmentStatus(database: DatabaseSync): void {
+function allowCurrentStatuses(database: DatabaseSync): void {
   const tableSql = (): string =>
     (
       database
         .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'")
         .get() as { sql: string }
     ).sql;
-  if (!tableSql().includes(oldStatusCheck)) return;
+  if (!newStatusCheck || tableSql().includes(newStatusCheck)) return;
   database.exec("PRAGMA foreign_keys = OFF;");
   try {
     database.exec("BEGIN IMMEDIATE");
     try {
       // Another process may have finished the rebuild while this one waited.
       const sql = tableSql();
-      if (sql.includes(oldStatusCheck)) {
+      if (!sql.includes(newStatusCheck)) {
         const rebuilt = sql
-          .replace(oldStatusCheck, newStatusCheck)
+          .replace(statusCheckPattern, newStatusCheck)
           .replace(/^CREATE TABLE "?tasks"?/, "CREATE TABLE tasks_rebuild");
         database.exec(rebuilt);
         database.exec("INSERT INTO tasks_rebuild SELECT * FROM tasks");
@@ -88,8 +88,8 @@ function migrateExistingDatabase(database: DatabaseSync): void {
       database.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${definition}`);
     }
   }
-  allowReassignmentStatus(database);
-  database.exec("UPDATE schema_info SET version = 5;");
+  allowCurrentStatuses(database);
+  database.exec("UPDATE schema_info SET version = 6;");
 }
 
 export function getShareLanePaths(projectRoot = process.cwd()): ShareLanePaths {

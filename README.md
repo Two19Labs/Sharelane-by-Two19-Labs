@@ -24,7 +24,7 @@ ShareLane gives all of them one shared notebook for the project and one place to
 - **Usage, quota and handoff.** Token use is recorded for every run. Before each run, ShareLane checks the agent's remaining allowance. At 7% or less, or when a run fails because the agent ran out, it saves the work, writes a handoff note and passes the task to another agent on the same branch. ("Could not tell" is reported, never treated as "fine", but it does not block a run on its own.)
 - **Token budgets** per task.
 - **Approved checks (`run_check`).** Agents can ask ShareLane to run commands you approved, such as `npm test`, without getting a terminal.
-- **Live dashboard.** A local, read-only web page showing tasks, live output, claims, allowance meters, token use and the context map.
+- **Live office dashboard.** A local page that shows your agents as employees in a pixel-art office: at their desk when working, at the review board when finished, in the meeting room when they need you. Click one to read its conversation and live output, and to pause, resume, stop, message, or assign it work. A Details tab has the tables: tasks, claims, allowance meters, token use, and the context map.
 
 ## How it fits together
 
@@ -141,7 +141,7 @@ git merge sharelane/task-1a2b...   # only if you're happy with it
 
 ## Safety model
 
-- **Local only.** All state is in your project's `.sharelane/` folder. The dashboard listens on `127.0.0.1`, answers only `localhost`, is read-only, and never changes anything.
+- **Local only.** All state is in your project's `.sharelane/` folder. The dashboard listens on `127.0.0.1` and answers only `localhost`. Its controls work only from the page itself: each request needs a random token that other websites cannot read, plus a matching Origin.
 - **No API keys.** Agents run through their official CLIs, logged in with your own subscription. ShareLane does not store credentials.
 - **One exception, optional:** when the saved Claude status-line snapshot is more than 15 minutes old, ShareLane may read Claude Code's sign-in token into memory to make one read-only call to Anthropic's usage endpoint (at most once every 5 minutes). The token is never written anywhere. Turn this off with `SHARELANE_CLAUDE_USAGE_ENDPOINT=0`; Claude's quota then shows "could not tell" when the snapshot is stale.
 - **Nothing is merged for you.** Workers edit isolated worktrees and leave branches. You decide what reaches your main branch.

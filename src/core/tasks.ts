@@ -30,6 +30,7 @@ export type TaskStatus =
   | "failed"
   | "cancelled"
   | "needs_reassignment"
+  | "paused"
   | "orphaned";
 
 /** Token totals across every run of a task (first run, replies, reassignments). */
@@ -152,6 +153,7 @@ const terminalStatuses = new Set<TaskStatus>([
   "failed",
   "cancelled",
   "needs_reassignment",
+  "paused",
   "orphaned",
 ]);
 const persistedTerminalStatuses = new Set<TaskStatus>([
@@ -159,6 +161,11 @@ const persistedTerminalStatuses = new Set<TaskStatus>([
   "failed",
   "cancelled",
 ]);
+
+/** A person stopped this run (cancel or pause), so the worker must not record a failure. */
+export function isStoppedByUser(status: TaskStatus): boolean {
+  return status === "cancelled" || status === "paused";
+}
 // Resolve tsx the way Node would from this package, so it is found whether
 // ShareLane runs from its own repo or is installed (and hoisted) in a project.
 const tsxPath = createRequire(import.meta.url).resolve("tsx/cli");
@@ -690,7 +697,7 @@ export function setTaskAgentProcess(
     taskId,
     { agent_pid: processId, updated_at: new Date().toISOString() },
     projectRoot,
-    ["running", "failed", "cancelled"],
+    ["running", "failed", "cancelled", "paused"],
   );
 }
 
@@ -1000,9 +1007,11 @@ export function replyToTask(
 ): ShareLaneTask {
   const projectRoot = options.projectRoot ?? process.cwd();
   const task = getTask(taskId, projectRoot);
-  if (task.status !== "completed" || !task.sessionId) {
+  // A paused task may have no session yet (it was stopped mid-run); its next
+  // run then starts a fresh conversation on the same branch.
+  if (task.status !== "paused" && (task.status !== "completed" || !task.sessionId)) {
     throw new Error(
-      `Task "${taskId}" must be completed with a saved session before replying. Current status: ${task.status}.`,
+      `Task "${taskId}" must be completed with a saved session, or paused, before replying. Current status: ${task.status}.`,
     );
   }
   assertBudgetLeft(task);
@@ -1024,7 +1033,7 @@ export function replyToTask(
           worker_pid = NULL, agent_pid = NULL, finished_at = NULL,
           source_root = ?, worktree_path = ?, branch_name = ?, base_commit = ?,
           updated_at = ?
-         WHERE id = ? AND status = 'completed'`,
+         WHERE id = ? AND status IN ('completed', 'paused')`,
       )
       .run(
         workspace.sourceRoot,
@@ -1139,26 +1148,97 @@ export function cancelTask(
   projectRoot = process.cwd(),
 ): ShareLaneTask {
   const before = getTask(taskId, projectRoot);
+  if (before.status === "paused") {
+    // Nothing is running and the work is already saved on the branch.
+    const now = new Date().toISOString();
+    const cancelled = updateTask(
+      taskId,
+      { status: "cancelled", finished_at: now, updated_at: now },
+      projectRoot,
+      ["paused"],
+    );
+    if (!cancelled.changed) {
+      throw new Error(`Task "${taskId}" changed before it could be cancelled.`);
+    }
+    writeTaskFile(cancelled.task, projectRoot);
+    return cancelled.task;
+  }
+  return stopTask(taskId, "cancelled", projectRoot);
+}
+
+/**
+ * Pause a running task: stop the agent, save its work on the task branch, and
+ * keep the task resumable. CLIs cannot freeze mid-turn, so resuming starts a
+ * new run on the same branch (see resumeTask).
+ */
+export function pauseTask(
+  taskId: string,
+  projectRoot = process.cwd(),
+): ShareLaneTask {
+  const before = getTask(taskId, projectRoot);
+  if (before.status !== "queued" && before.status !== "running") {
+    throw new Error(`Only a queued or running task can be paused; this one is ${before.status}.`);
+  }
+  return stopTask(taskId, "paused", projectRoot);
+}
+
+const defaultResumeNote =
+  "You were paused partway through this task. Any changes you had made are already in your workspace; check them, then continue.";
+
+/** Continue a paused task on its branch, optionally with an extra instruction. */
+export function resumeTask(
+  taskId: string,
+  note?: string,
+  options: TaskActionOptions = {},
+): ShareLaneTask {
+  const projectRoot = options.projectRoot ?? process.cwd();
+  const task = getTask(taskId, projectRoot);
+  if (task.status !== "paused") {
+    throw new Error(`Only a paused task can be resumed; this one is ${task.status}.`);
+  }
+  const extra = note?.trim();
+  const resumeNote = extra ? `${defaultResumeNote}\n\n${extra}` : defaultResumeNote;
+  // Without a saved session the agent starts fresh, so it needs the request again.
+  const message = task.sessionId
+    ? `${resumeNote}${latestInstruction(task, projectRoot)}`
+    : `${resumeNote}\n\nThe task:\n${task.prompt}${latestInstruction(task, projectRoot)}`;
+  return replyToTask(taskId, message, options);
+}
+
+function latestInstruction(task: ShareLaneTask, projectRoot: string): string {
+  const latest = latestTaskPrompt(task.id, projectRoot);
+  return latest === task.prompt || latest.startsWith(defaultResumeNote)
+    ? ""
+    : `\n\nYour latest instruction:\n${latest}`;
+}
+
+function stopTask(
+  taskId: string,
+  as: "cancelled" | "paused",
+  projectRoot: string,
+): ShareLaneTask {
+  const before = getTask(taskId, projectRoot);
   if (persistedTerminalStatuses.has(before.status)) {
     throw new Error(
-      `Task "${taskId}" is already ${before.status} and cannot be cancelled.`,
+      `Task "${taskId}" is already ${before.status} and cannot be ${as}.`,
     );
   }
+  const verb = as === "paused" ? "Paused" : "Cancelled";
   const now = new Date().toISOString();
-  const cancelled = updateTask(
+  const stopped = updateTask(
     taskId,
     {
-      status: "cancelled",
+      status: as,
       agent_pid: null,
       worker_pid: null,
       finished_at: now,
       updated_at: now,
     },
     projectRoot,
-    ["queued", "running", "needs_reassignment"],
+    as === "paused" ? ["queued", "running"] : ["queued", "running", "needs_reassignment"],
   );
-  if (!cancelled.changed) {
-    throw new Error(`Task "${taskId}" changed before it could be cancelled.`);
+  if (!stopped.changed) {
+    throw new Error(`Task "${taskId}" changed before it could be ${as}.`);
   }
   stopProcess(before.agentPid);
   stopProcess(before.workerPid);
@@ -1178,7 +1258,7 @@ export function cancelTask(
         recipientAgent: before.callerAgent,
         taskId,
         kind: "scope_violation",
-        message: `Cancelled task ${taskId} had changed ${finalized.blockedFiles.join(", ")} outside its scope; those changes were kept off ${before.branchName ?? "the task branch"} and saved to ${relative(projectRoot, outOfScopePatchPath(taskId, projectRoot)).replaceAll("\\", "/")}.`,
+        message: `${verb} task ${taskId} had changed ${finalized.blockedFiles.join(", ")} outside its scope; those changes were kept off ${before.branchName ?? "the task branch"} and saved to ${relative(projectRoot, outOfScopePatchPath(taskId, projectRoot)).replaceAll("\\", "/")}.`,
       });
     }
     if (!finalized.cleanedUp && before.worktreePath) {
@@ -1190,7 +1270,7 @@ export function cancelTask(
       recipientAgent: before.callerAgent,
       taskId,
       kind: "worktree_cleanup_failed",
-      message: `Cancelled task ${taskId}, but its worktree was left for recovery: ${error instanceof Error ? error.message : String(error)}.`,
+      message: `${verb} task ${taskId}, but its worktree was left for recovery: ${error instanceof Error ? error.message : String(error)}.`,
     });
   }
   return getTask(taskId, projectRoot);

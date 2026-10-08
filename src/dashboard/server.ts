@@ -1,8 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { readFileSync } from "node:fs";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { collectDashboardState, collectTaskDetail, readTaskLog } from "./state.js";
+import { cancelTask, delegateTask, pauseTask, replyToTask, resumeTask } from "../core/tasks.js";
 
 export const DEFAULT_DASHBOARD_PORT = 4317;
 
@@ -11,6 +13,8 @@ const assets: Record<string, { file: string; type: string }> = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
   "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
+  "/office.js": { file: "office.js", type: "text/javascript; charset=utf-8" },
+  "/office.css": { file: "office.css", type: "text/css; charset=utf-8" },
 };
 const taskIdPattern = /^task-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -37,17 +41,126 @@ export interface RunningDashboard {
   close: () => Promise<void>;
 }
 
+const MAX_BODY_BYTES = 64 * 1024;
+
+async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += (chunk as Buffer).length;
+    if (size > MAX_BODY_BYTES) throw new Error("Request body is too large.");
+    chunks.push(chunk as Buffer);
+  }
+  const text = Buffer.concat(chunks).toString("utf8").trim();
+  if (!text) return {};
+  const value: unknown = JSON.parse(text);
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected a JSON object.");
+  return value as Record<string, unknown>;
+}
+
+function optionalText(body: Record<string, unknown>, key: string): string | undefined {
+  const value = body[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") throw new Error(`"${key}" must be text.`);
+  return value.trim() || undefined;
+}
+
+function requiredText(body: Record<string, unknown>, key: string): string {
+  const value = optionalText(body, key);
+  if (!value) throw new Error(`"${key}" is required.`);
+  return value;
+}
+
 /**
- * Serve the read-only dashboard on this computer only. Requests must name
- * localhost or 127.0.0.1 in their Host header, which stops other websites
- * from reading task data through DNS rebinding.
+ * Serve the dashboard on this computer only. Requests must name localhost or
+ * 127.0.0.1 in their Host header, which stops other websites from reading
+ * task data through DNS rebinding. Controls (POST) also need this server's
+ * random token, which only a same-origin page can read, plus a JSON content
+ * type and a matching Origin, so another website cannot drive the agents.
  */
 export async function startDashboard(options: {
   projectRoot?: string;
   port?: number;
+  /** Environment for task workers started from the page (tests use this). */
+  env?: NodeJS.ProcessEnv;
 } = {}): Promise<RunningDashboard> {
   const projectRoot = options.projectRoot ?? process.cwd();
   let port = options.port ?? DEFAULT_DASHBOARD_PORT;
+  const controlToken = randomBytes(24).toString("hex");
+  const tokenMatches = (value: string | string[] | undefined): boolean => {
+    const given = Buffer.from(typeof value === "string" ? value : "");
+    const expected = Buffer.from(controlToken);
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  };
+
+  const handleControl = async (
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+    allowedHosts: Set<string>,
+  ): Promise<void> => {
+    const origin = String(request.headers.origin ?? "").toLowerCase();
+    if (
+      !allowedHosts.has(origin.replace(/^http:\/\//, "")) ||
+      !tokenMatches(request.headers["x-sharelane-token"])
+    ) {
+      sendJson(response, 403, { error: "Controls only work from the ShareLane page itself." });
+      return;
+    }
+    if (!/^application\/json\b/i.test(String(request.headers["content-type"] ?? ""))) {
+      sendJson(response, 415, { error: "Send controls as JSON." });
+      return;
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = await readJsonBody(request);
+    } catch (error) {
+      sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+    try {
+      if (url.pathname === "/api/tasks") {
+        const budget = body.budgetTokens;
+        if (budget !== undefined && (typeof budget !== "number" || !Number.isInteger(budget) || budget <= 0)) {
+          throw new Error('"budgetTokens" must be a positive whole number.');
+        }
+        const scope = optionalText(body, "scope")
+          ?.split(/[\n,]+/)
+          .map((pattern) => pattern.trim())
+          .filter(Boolean);
+        const task = delegateTask({
+          agent: requiredText(body, "agent"),
+          prompt: requiredText(body, "prompt"),
+          callerAgent: "you",
+          scope: scope && scope.length > 0 ? scope : undefined,
+          budgetTokens: budget as number | undefined,
+          projectRoot,
+          env: options.env,
+        });
+        sendJson(response, 200, { taskId: task.id, status: task.status });
+        return;
+      }
+      const match = /^\/api\/tasks\/([^/]+)\/(pause|resume|stop|reply)$/.exec(url.pathname);
+      const taskId = match?.[1] ?? "";
+      if (!match || !taskIdPattern.test(taskId)) {
+        sendJson(response, 404, { error: "Not found." });
+        return;
+      }
+      const action = match[2];
+      const task =
+        action === "pause"
+          ? pauseTask(taskId, projectRoot)
+          : action === "stop"
+            ? cancelTask(taskId, projectRoot)
+            : action === "resume"
+              ? resumeTask(taskId, optionalText(body, "message"), { projectRoot, env: options.env })
+              : replyToTask(taskId, requiredText(body, "message"), { projectRoot, env: options.env });
+      sendJson(response, 200, { taskId: task.id, status: task.status });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sendJson(response, /Unknown task/.test(message) ? 404 : 409, { error: message });
+    }
+  };
 
   const handle = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
@@ -55,11 +168,19 @@ export async function startDashboard(options: {
       sendJson(response, 403, { error: "The ShareLane dashboard only answers requests for localhost." });
       return;
     }
-    if (request.method !== "GET") {
-      sendJson(response, 405, { error: "The dashboard is read-only." });
+    const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
+    if (request.method === "POST") {
+      await handleControl(request, response, url, allowedHosts);
       return;
     }
-    const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
+    if (request.method !== "GET") {
+      sendJson(response, 405, { error: "Only GET and POST are supported." });
+      return;
+    }
+    if (url.pathname === "/api/session") {
+      sendJson(response, 200, { token: controlToken });
+      return;
+    }
     const asset = assets[url.pathname];
     if (asset) {
       send(response, 200, asset.type, readFileSync(`${publicDir}${asset.file}`));

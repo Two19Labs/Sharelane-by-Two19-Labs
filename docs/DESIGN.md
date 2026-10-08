@@ -256,7 +256,8 @@ Layered, because MCP tools are voluntary and an agent can ignore instructions:
 - **Live updates:** the page polls every 2 seconds and pauses while hidden; live output is read by byte offset from the task's own log. A link such as `/#task=<id>` opens a task directly.
 - **Chats:** worker transcripts are captured by the hub. Reading interactive chats from each CLI's transcript folder (adapter `transcripts` field) is still to come.
 - **Later:** a VS Code extension with the same views in a side panel.
-- **Later, fun layer:** an animated "office" view. Each agent is a little character at a desk; you can watch them pick up tickets, walk to files they've claimed, pass handoff notes, and show a speech bubble with what they're currently doing. Same live data as the dashboard, just visual. Also good for demos and content.
+- **Built (2026-10-08, decisions 71–73):** the office view below is now the dashboard's default page, with controls (pause, resume, stop, reply, assign).
+- **Originally planned as a later, fun layer:** an animated "office" view. Each agent is a little character at a desk; you can watch them pick up tickets, walk to files they've claimed, pass handoff notes, and show a speech bubble with what they're currently doing. Same live data as the dashboard, just visual. Also good for demos and content.
 
 ## 7. Tech choices
 

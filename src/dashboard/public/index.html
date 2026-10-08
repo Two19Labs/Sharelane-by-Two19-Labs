@@ -6,6 +6,7 @@
   <title>ShareLane dashboard</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/office.css">
 </head>
 <body>
   <header class="topbar">
@@ -16,13 +17,31 @@
         <p id="project" class="muted">Loading…</p>
       </div>
     </div>
+    <nav class="views" aria-label="View">
+      <button id="view-office" class="view-tab" type="button" aria-pressed="true">Office</button>
+      <button id="view-details" class="view-tab" type="button" aria-pressed="false">Details</button>
+    </nav>
     <div class="topbar-right">
       <span id="live" class="live" role="status" aria-live="polite">Connecting…</span>
       <button id="theme" class="ghost" type="button">Theme: system</button>
     </div>
   </header>
 
-  <main>
+  <main id="office-view" class="office" aria-label="Office">
+    <div class="office-stage">
+      <div id="office-hud" class="office-hud" aria-label="Team summary"></div>
+      <div class="office-world">
+        <canvas id="office-canvas" aria-label="Pixel-art office. Each employee is an agent; where they stand shows what they are doing." role="img"></canvas>
+        <div id="office-overlay" class="office-overlay"></div>
+      </div>
+      <div id="office-hotbar" class="office-hotbar" role="toolbar" aria-label="Employees and actions"></div>
+      <p class="office-legend muted">At a desk: working or paused · Review board: finished, ready for review · Meeting room: needs you · Lounge: free · Sofa: out of allowance</p>
+    </div>
+    <aside id="office-panel" class="office-panel" tabindex="-1" aria-label="Employee details" aria-live="polite"></aside>
+    <div id="office-toasts" class="toasts"></div>
+  </main>
+
+  <main id="details-view" hidden>
     <section id="kpis" class="kpis" aria-label="Summary"></section>
 
     <section class="panel" aria-labelledby="agents-heading">

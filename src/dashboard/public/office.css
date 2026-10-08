@@ -1,0 +1,173 @@
+/* ShareLane office view. Page chrome uses the role tokens from app.css; the
+   pixel world keeps its own fixed palette in both themes, like a game screen. */
+[hidden] { display: none !important; }
+.views { display: flex; gap: 4px; padding: 3px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); }
+.view-tab { border: 0; background: transparent; padding: 5px 14px; border-radius: 7px; cursor: pointer; color: var(--ink-2); }
+.view-tab[aria-pressed="true"] { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+
+main.office {
+  display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start;
+  max-width: 1600px;
+}
+@media (max-width: 1100px) { main.office { grid-template-columns: minmax(0, 1fr); } }
+.office-stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.office-hud { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.hud-project { font-weight: 600; margin-right: 6px; }
+.hud-chip {
+  display: inline-flex; gap: 4px; align-items: baseline; padding: 3px 10px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--border); font-size: 13px; color: var(--ink-2);
+}
+.hud-chip strong { color: var(--ink); }
+.hud-chip.active { border-color: var(--series-1); }
+.hud-chip.warning { border-color: var(--warning); }
+.hud-chip.good { border-color: var(--good); }
+.hud-chip.critical { border-color: var(--critical); background: color-mix(in srgb, var(--critical) 10%, var(--surface)); }
+
+.office-world {
+  position: relative; width: 100%; aspect-ratio: 480 / 288; border-radius: 14px; overflow: hidden;
+  border: 3px solid #2b2238; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); background: #2b2238;
+}
+#office-canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+.office-overlay { position: absolute; inset: 0; pointer-events: none; }
+.office-overlay > * { pointer-events: auto; }
+.office-sign {
+  position: absolute; transform: translate(-50%, -50%); pointer-events: none;
+  font: 600 clamp(9px, 1.1vw, 12px)/1 var(--sans); color: #fff8e8; letter-spacing: 0.02em;
+  background: rgba(43, 34, 56, 0.78); padding: 3px 7px; border-radius: 5px; white-space: nowrap;
+}
+.office-overlay > .office-sign { pointer-events: none; }
+.office-spot { position: absolute; border: 0; background: transparent; cursor: pointer; border-radius: 6px; padding: 0; }
+.office-spot:hover, .office-spot:focus-visible { background: rgba(255, 255, 255, 0.16); outline: 2px solid #fff8e8; }
+.office-spot-label {
+  position: absolute; left: 50%; bottom: calc(100% + 4px); transform: translateX(-50%); white-space: nowrap;
+  font: 600 12px/1 var(--sans); color: #fff; background: rgba(43, 34, 56, 0.9); padding: 4px 7px; border-radius: 5px;
+  opacity: 0; transition: opacity 0.12s; pointer-events: none;
+}
+.office-spot:hover .office-spot-label, .office-spot:focus-visible .office-spot-label { opacity: 1; }
+
+/* An employee's button sits just above its sprite: speech bubble, then name plate.
+   The ::after box extends the click target down over the sprite itself. */
+.employee {
+  position: absolute; transform: translate(-50%, -100%); border: 0; background: transparent; padding: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; z-index: 1;
+}
+.employee::after {
+  content: ""; position: absolute; left: 50%; top: 100%; transform: translateX(-50%);
+  width: 36px; height: 36px;
+}
+.employee .plate {
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  font: 600 clamp(9px, 1vw, 12px)/1 var(--sans); color: #fff; background: rgba(27, 21, 38, 0.82);
+  padding: 3px 6px; border-radius: 5px; border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.employee .dot { width: 7px; height: 7px; border-radius: 50%; background: #9a988f; }
+.employee.active .dot { background: #5aa9ff; }
+.employee.warning .dot { background: #fab219; }
+.employee.good .dot { background: #3ddc6b; }
+.employee.critical .dot { background: #ff5f5f; }
+.employee.serious .dot { background: #ec835a; }
+.employee.selected .plate, .employee:hover .plate, .employee:focus-visible .plate { background: #fff8e8; color: #1b1526; border-color: #1b1526; }
+.employee.selected { z-index: 2; }
+.employee:focus-visible { outline: none; }
+.employee .bubble {
+  font: 700 clamp(10px, 1.1vw, 13px)/1 var(--sans); color: #1b1526; background: #fff;
+  border: 2px solid #1b1526; border-radius: 8px; padding: 3px 6px; position: relative; min-width: 22px; text-align: center;
+}
+.employee .bubble::after {
+  content: ""; position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%);
+  border: 4px solid transparent; border-top-color: #1b1526;
+}
+.employee .bubble.work, .employee .bubble.queued { animation: typing 1.2s steps(3) infinite; }
+.employee .bubble.needs { background: #ffdfdf; color: #b42323; animation: bob 0.9s ease-in-out infinite; }
+.employee .bubble.review { background: #dff8e4; color: #006300; }
+.employee .bubble.paused, .employee .bubble.tired { background: #eef0ff; color: #3b3f8a; font-style: italic; }
+@keyframes bob { 50% { transform: translateY(-3px); } }
+@keyframes typing { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .employee .bubble { animation: none !important; } }
+
+.office-hotbar {
+  display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; padding: 8px;
+  background: #2b2238; border-radius: 12px; border: 3px solid #1b1526;
+}
+.slot {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 72px;
+  padding: 6px 8px 5px; border-radius: 8px; cursor: pointer; color: #fff8e8;
+  background: #3d3150; border: 2px solid #574870;
+}
+.slot:hover, .slot.selected { border-color: #fff8e8; background: #4b3d63; }
+.slot-name { font-size: 11.5px; white-space: nowrap; }
+.slot-icon { font-size: 20px; line-height: 32px; height: 32px; }
+.slot-dot { position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: #9a988f; }
+.slot.active .slot-dot { background: #5aa9ff; }
+.slot.warning .slot-dot { background: #fab219; }
+.slot.good .slot-dot { background: #3ddc6b; }
+.slot.critical .slot-dot { background: #ff5f5f; }
+.slot.serious .slot-dot { background: #ec835a; }
+.slot.action { background: #2f5d8a; border-color: #4479ad; }
+.office-legend { font-size: 12.5px; text-align: center; }
+
+.office-panel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px;
+  display: flex; flex-direction: column; gap: 12px; min-width: 0; position: sticky; top: 76px;
+  max-height: calc(100vh - 96px); overflow-y: auto;
+}
+@media (max-width: 1100px) { .office-panel { position: static; max-height: none; } }
+.office-panel:focus { outline: none; }
+.panel-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.who { display: flex; gap: 10px; align-items: center; }
+.portrait { image-rendering: pixelated; background: #e9dfcf; border-radius: 6px; flex: none; }
+.mood { font-size: 14px; color: var(--ink-2); }
+.card { border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--surface-2); }
+.card > .row, .composer .row, .new-task .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.card summary { cursor: pointer; font-weight: 600; }
+.task-name { font-weight: 600; overflow-wrap: anywhere; }
+.office-meters { display: flex; flex-direction: column; gap: 6px; }
+.office-meters .meter-row { grid-template-columns: 64px 1fr auto; }
+.controls { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn {
+  border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 7px 12px;
+  cursor: pointer; font-weight: 600;
+}
+.btn:hover { background: var(--badge-bg); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.primary { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+.btn.danger { color: var(--critical-ink); border-color: var(--critical); }
+.btn.wide { width: 100%; }
+.composer, .new-task { display: flex; flex-direction: column; gap: 8px; }
+.new-task label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.new-task label > span { font-weight: 600; }
+.composer textarea, .new-task textarea, .new-task input, .new-task select {
+  font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px; width: 100%; resize: vertical;
+}
+.composer textarea:disabled { opacity: 0.6; }
+.chat { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow-y: auto; padding-top: 8px; }
+.bubble-msg { padding: 8px 10px; border-radius: 10px; max-width: 92%; }
+.bubble-msg .text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.bubble-msg .meta { font-size: 11.5px; color: var(--muted); margin-bottom: 3px; }
+.bubble-msg.user { align-self: flex-end; background: color-mix(in srgb, var(--series-1) 14%, var(--surface)); }
+.bubble-msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); }
+.office-panel .log { max-height: 380px; }
+.team { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.team-row, .history-row {
+  width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2); border-radius: 10px; padding: 8px;
+}
+.team-row:hover, .history-row:hover, .history-row.current { border-color: var(--ink-2); }
+.team-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; font-size: 13px; }
+.history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.history-row { padding: 6px 8px; font-size: 13px; }
+.history-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-row .meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.command { font: 12px var(--mono); background: var(--surface); padding: 4px 6px; border-radius: 6px; overflow-wrap: anywhere; }
+.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 30; max-width: min(380px, calc(100vw - 32px)); }
+.toast { background: var(--ink); color: var(--surface); padding: 10px 14px; border-radius: 10px; font-size: 13.5px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); }
+.toast.good { border-left: 4px solid var(--good); }
+.toast.critical { border-left: 4px solid var(--critical); }
+@media (max-width: 560px) {
+  .views { order: 3; width: 100%; }
+  .view-tab { flex: 1; }
+  .slot { min-width: 60px; }
+  .office-sign { display: none; }
+  .employee .plate { padding: 2px 4px; }
+}

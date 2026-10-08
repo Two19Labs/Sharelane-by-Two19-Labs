@@ -28,6 +28,7 @@ import {
   outOfScopePatchPath,
   recordTaskWorkspaceResult,
   setTaskAgentProcess,
+  isStoppedByUser,
 } from "./core/tasks.js";
 
 function scopeInstructions(scope: string[] | undefined): string[] {
@@ -207,7 +208,7 @@ async function main(): Promise<void> {
     clearInterval(heartbeat);
     const message = error instanceof Error ? error.message : String(error);
     if (runId !== undefined) {
-      const cancelled = getTask(task.id, projectRoot).status === "cancelled";
+      const cancelled = isStoppedByUser(getTask(task.id, projectRoot).status);
       finishTaskRun(runId, cancelled ? "cancelled" : "failed", projectRoot, undefined, message);
     }
     try {
@@ -243,7 +244,7 @@ async function main(): Promise<void> {
         return;
       }
     }
-    if (getTask(task.id, projectRoot).status !== "cancelled") {
+    if (!isStoppedByUser(getTask(task.id, projectRoot).status)) {
       failTask(task.id, message, projectRoot);
     }
   }
@@ -258,7 +259,7 @@ main().catch((error: unknown) => {
     try {
       const task = getTask(taskId, projectRoot);
       releaseClaims({ agent: task.agent, taskId, projectRoot });
-      if (getTask(taskId, projectRoot).status !== "cancelled") {
+      if (!isStoppedByUser(getTask(taskId, projectRoot).status)) {
         failTask(taskId, message, projectRoot);
       }
     } catch {

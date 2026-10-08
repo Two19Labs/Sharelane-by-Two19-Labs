@@ -207,7 +207,7 @@ export async function collectDashboardState(
       database
         .prepare(
           `SELECT id FROM tasks
-           ORDER BY CASE WHEN status IN ('queued', 'running', 'needs_reassignment') THEN 0 ELSE 1 END,
+           ORDER BY CASE WHEN status IN ('queued', 'running', 'needs_reassignment', 'paused') THEN 0 ELSE 1 END,
                     updated_at DESC
            LIMIT ?`,
         )

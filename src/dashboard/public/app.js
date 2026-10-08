@@ -1,5 +1,7 @@
-// ShareLane dashboard: polls the read-only API and renders with text nodes only,
-// so task prompts and agent output can never inject markup.
+// ShareLane dashboard: polls the API and renders with text nodes only, so task
+// prompts and agent output can never inject markup. The office view (office.js)
+// is the default; the details view is the full tables-and-charts dashboard.
+import { createOffice } from "./office.js";
 
 const REFRESH_MS = 2000;
 const SVG = "http://www.w3.org/2000/svg";
@@ -81,6 +83,7 @@ const taskStatus = {
   cancelled: { tone: "", icon: "–", label: "Cancelled" },
   orphaned: { tone: "serious", icon: "!", label: "Orphaned" },
   needs_reassignment: { tone: "warning", icon: "↪", label: "Needs handoff" },
+  paused: { tone: "warning", icon: "❚❚", label: "Paused" },
 };
 const quotaStatus = {
   ok: { tone: "good", icon: "✓", label: "Keep working" },
@@ -190,7 +193,7 @@ const filters = [
   ["done", "Finished"],
 ];
 function matchesFilter(task) {
-  if (view.filter === "active") return task.status === "queued" || task.status === "running";
+  if (view.filter === "active") return ["queued", "running", "paused"].includes(task.status);
   if (view.filter === "waiting") return task.status === "needs_reassignment";
   if (view.filter === "done") return ["completed", "failed", "cancelled", "orphaned"].includes(task.status);
   return true;
@@ -456,6 +459,30 @@ document.getElementById("usage-toggle").addEventListener("click", () => {
   render();
 });
 
+const office = createOffice({ h, ago, until, formatNumber, formatCompact, statusPill, taskStatus });
+office.onChange(() => tick());
+
+let page = "office";
+try {
+  page = localStorage.getItem("sharelane-view") || "office";
+} catch {
+  // Storage can be unavailable; the office is the default.
+}
+function showPage(next) {
+  page = next;
+  try {
+    localStorage.setItem("sharelane-view", page);
+  } catch {
+    // Not remembered, but still shown.
+  }
+  document.getElementById("details-view").hidden = page !== "details";
+  document.getElementById("view-office").setAttribute("aria-pressed", String(page === "office"));
+  document.getElementById("view-details").setAttribute("aria-pressed", String(page === "details"));
+  office.setActive(page === "office");
+}
+document.getElementById("view-office").addEventListener("click", () => showPage("office"));
+document.getElementById("view-details").addEventListener("click", () => showPage("details"));
+
 async function tick() {
   if (document.hidden) return;
   try {
@@ -463,6 +490,7 @@ async function tick() {
     if (!response.ok) throw new Error(String(response.status));
     view.state = await response.json();
     view.lastOk = Date.now();
+    await office.update(view.state);
     if (view.selected) {
       await loadDetail();
       await loadLog();
@@ -477,10 +505,12 @@ async function tick() {
 // A link like /#task=<id> opens that task's detail straight away.
 const linked = /^#task=(task-[0-9a-f-]+)$/.exec(location.hash);
 if (linked) {
+  page = "details";
   view.selected = linked[1];
   view.log = { taskId: linked[1], offset: -1, text: "", follow: true };
 }
 
+showPage(page);
 tick();
 setInterval(tick, REFRESH_MS);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(); });

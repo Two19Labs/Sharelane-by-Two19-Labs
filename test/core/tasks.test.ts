@@ -288,6 +288,38 @@ test("reports a missing task supervisor as orphaned without changing the databas
   }
 });
 
+test("an older database is upgraded in place to accept paused tasks", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "sharelane-migrate-"));
+  try {
+    const now = new Date().toISOString();
+    const database = openDatabase(projectRoot);
+    // Recreate the version-5 tasks table, whose status list has no 'paused'.
+    const sql = (database.prepare("SELECT sql FROM sqlite_master WHERE name = 'tasks'").get() as { sql: string }).sql;
+    database.exec("PRAGMA foreign_keys = OFF");
+    database.exec("DROP TABLE tasks");
+    database.exec(sql.replace(", 'paused')", ")"));
+    database.exec("UPDATE schema_info SET version = 5");
+    database
+      .prepare("INSERT INTO tasks (id, agent, prompt, status, depth, task_file, log_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("task-old", "fake", "old work", "completed", 1, "x.md", "x.log", now, now);
+    assert.throws(() => database.prepare("UPDATE tasks SET status = 'paused' WHERE id = 'task-old'").run(), /CHECK/);
+    database.close();
+
+    const upgraded = openDatabase(projectRoot);
+    try {
+      upgraded.prepare("UPDATE tasks SET status = 'paused' WHERE id = 'task-old'").run();
+      const row = upgraded.prepare("SELECT status, prompt FROM tasks WHERE id = 'task-old'").get() as { status: string; prompt: string };
+      assert.deepEqual({ ...row }, { status: "paused", prompt: "old work" });
+      const version = upgraded.prepare("SELECT version FROM schema_info").get() as { version: number };
+      assert.equal(version.version, 6);
+    } finally {
+      upgraded.close();
+    }
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test(
   "Windows broker launches a worker outside the caller's process tree",
   { skip: process.platform !== "win32" },
