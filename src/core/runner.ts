@@ -59,6 +59,27 @@ function defaultLogPath(projectRoot: string, agent: string): string {
  * without a shell. Resolve such a launcher to "node <script>" so agent
  * prompts are still passed as plain arguments with no shell involved.
  */
+/**
+ * Overlay extra variables on a base environment. Windows names are
+ * case-insensitive (its PATH is usually stored as "Path"), so an extra
+ * variable replaces any base variable whose name differs only in case.
+ */
+export function mergeEnvironment(
+  base: NodeJS.ProcessEnv,
+  extra: NodeJS.ProcessEnv = {},
+): NodeJS.ProcessEnv {
+  const env = { ...base };
+  for (const [name, value] of Object.entries(extra)) {
+    if (process.platform === "win32") {
+      for (const existing of Object.keys(env)) {
+        if (existing !== name && existing.toUpperCase() === name.toUpperCase()) delete env[existing];
+      }
+    }
+    env[name] = value;
+  }
+  return env;
+}
+
 export function resolveAgentExecutable(
   command: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -130,7 +151,7 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
   const log = createWriteStream(logPath, { encoding: "utf8", flags: "a" });
   log.write(`ShareLane run: ${options.agent}\nModel: ${describeModel(options.model)}\nStarted: ${startedAt}\n\n`);
 
-  const env = { ...process.env, ...options.env };
+  const env = mergeEnvironment(process.env, options.env);
   const executable = resolveAgentExecutable(command.command, env);
 
   return await new Promise<AgentRunResult>((resolve, reject) => {
