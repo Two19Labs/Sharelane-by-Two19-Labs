@@ -80,6 +80,14 @@ function linkDependencies(projectRoot: string, worktreePath: string): void {
   );
 }
 
+function isDependencyLink(worktreePath: string): boolean {
+  try {
+    return lstatSync(join(worktreePath, "node_modules")).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 /** Remove ShareLane's node_modules link (never its target) so Git can delete the checkout. */
 function unlinkDependencies(worktreePath: string): void {
   const link = join(worktreePath, "node_modules");
@@ -152,6 +160,8 @@ export function listWorkspaceChanges(
       for (const path of nulSeparated(result.stdout)) paths.add(path);
     }
   }
+  // ShareLane's own dependency link is never the worker's change.
+  if (paths.has("node_modules") && isDependencyLink(worktreePath)) paths.delete("node_modules");
   return [...paths].sort();
 }
 
@@ -196,6 +206,9 @@ export function finalizeTaskWorkspace(input: {
     return { changedFiles: [], blockedFiles: [], cleanedUp: false };
   }
   const worktreePath = input.worktreePath;
+  // The run is over, so drop the dependency link before staging: on macOS and
+  // Linux it is a file-type symlink that a "node_modules/" ignore rule misses.
+  unlinkDependencies(worktreePath);
   const changedBeforeCommit = listWorkspaceChanges(worktreePath, input.baseCommit);
   git(worktreePath, ["add", "-A"]);
   const blockedFiles = input.scope

@@ -145,24 +145,36 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult
 
     let stdout = "";
     let stderr = "";
+    // A child that fails to start emits "error" and then "close": finish the
+    // log exactly once, and drop output that arrives after it is closed.
+    let finished = false;
+    log.on("error", () => {});
+    const record = (text: string) => {
+      if (!log.writableEnded) log.write(text);
+    };
+    const finish = (text: string, then: () => void) => {
+      if (finished) return;
+      finished = true;
+      log.end(text, then);
+    };
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
-      log.write(`[stdout] ${chunk}`);
+      record(`[stdout] ${chunk}`);
     });
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
-      log.write(`[stderr] ${chunk}`);
+      record(`[stderr] ${chunk}`);
     });
 
     child.once("error", (error) => {
-      log.end(`\nRunner error: ${error.message}\n`, () => reject(error));
+      finish(`\nRunner error: ${error.message}\n`, () => reject(error));
     });
     child.once("close", (exitCode, signal) => {
       const finishedAt = new Date().toISOString();
       const code = exitCode ?? 1;
-      log.end(`\nFinished: ${finishedAt}\nExit code: ${code}\n`, () => {
+      finish(`\nFinished: ${finishedAt}\nExit code: ${code}\n`, () => {
         if (code !== 0) {
           // Some CLIs (Codex) report errors such as "out of credits" in their
           // JSON output, so include the last error-looking stdout line too.

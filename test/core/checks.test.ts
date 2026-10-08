@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -173,7 +174,9 @@ test("the allow-list comes from the owner's project, not the worker's editable c
           );
           const result = await runCheck({ name: "hello", workspaceRoot, checks: approved });
           assert.equal(result.exitCode, 0);
-          assert.match(result.output, new RegExp("cwd=" + workspaceRoot.replaceAll("\\", "\\\\"), "i"));
+          // macOS reports /private/var/... for a /var/... temp folder, so compare real paths.
+          const output = result.output.toLowerCase();
+          assert.ok([workspaceRoot, realpathSync(workspaceRoot)].some((path) => output.includes(`cwd=${path}`.toLowerCase())), result.output);
         },
       );
     },

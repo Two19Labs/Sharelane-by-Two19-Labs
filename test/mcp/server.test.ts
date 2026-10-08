@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -289,7 +290,9 @@ test("a delegated worker cannot approve its own checks by editing its worktree c
     assert.match(firstText(injected), /"evil" is not an approved check[\s\S]*- hello/);
     const approved = await workerClient.callTool({ name: "run_check", arguments: { name: "hello" } });
     assert.match(firstText(approved), /PASSED with exit code 0/);
-    assert.ok(firstText(approved).toLowerCase().includes(`ran in ${worker}`.toLowerCase()), "runs in the worker's own worktree");
+    const ranIn = firstText(approved).toLowerCase();
+    // macOS may report the real path (/private/var/...) of a /var/... temp folder.
+    assert.ok([worker, realpathSync(worker)].some((path) => ranIn.includes(`ran in ${path}`.toLowerCase())), "runs in the worker's own worktree");
   } finally {
     await workerClient.close();
     await rm(owner, { recursive: true, force: true });

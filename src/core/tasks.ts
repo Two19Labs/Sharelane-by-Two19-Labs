@@ -576,7 +576,7 @@ function launchTaskWorker(
       task.id,
       { worker_pid: workerPid, updated_at: new Date().toISOString() },
       projectRoot,
-      ["queued"],
+      ["queued", "running"], // the worker may already have started
     ).task;
   }
 
@@ -624,7 +624,7 @@ function launchTaskWorker(
     task.id,
     { worker_pid: child.pid ?? null, updated_at: new Date().toISOString() },
     projectRoot,
-    ["queued"],
+    ["queued", "running"], // the worker may already have started
   ).task;
 }
 
