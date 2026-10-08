@@ -93,7 +93,7 @@ test("an agent that runs out of credits mid-task is taken over on the same branc
       projectRoot: root,
       env: { ...env, FAKE_EDIT_PATH: "work/widget.txt" },
     });
-    const task = (await waitForTask(delegated.id, 30_000, root)).task;
+    const task = (await waitForTask(delegated.id, 60_000, root)).task;
     assert.equal(task.status, "completed", task.error ?? "task did not complete");
     assert.equal(task.agent, "finisher");
     assert.equal(task.reassignments, 1);

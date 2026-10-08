@@ -27,7 +27,7 @@ const previewTypes: Record<string, string> = {
   ".gif": "image/gif",
   ".webp": "image/webp",
 };
-import { cancelTask, delegateTask, pauseTask, replyToTask, resumeTask } from "../core/tasks.js";
+import { cancelTask, delegateTask, dismissTask, pauseTask, replyToTask, resumeTask } from "../core/tasks.js";
 
 export const DEFAULT_DASHBOARD_PORT = 4317;
 
@@ -164,7 +164,7 @@ export async function startDashboard(options: {
         sendJson(response, 200, { taskId: task.id, status: task.status });
         return;
       }
-      const match = /^\/api\/tasks\/([^/]+)\/(pause|resume|stop|reply)$/.exec(url.pathname);
+      const match = /^\/api\/tasks\/([^/]+)\/(pause|resume|stop|reply|dismiss)$/.exec(url.pathname);
       const taskId = match?.[1] ?? "";
       if (!match || !taskIdPattern.test(taskId)) {
         sendJson(response, 404, { error: "Not found." });
@@ -172,7 +172,9 @@ export async function startDashboard(options: {
       }
       const action = match[2];
       const task =
-        action === "pause"
+        action === "dismiss"
+          ? dismissTask(taskId, { endConversation: body.endConversation === true, projectRoot })
+          : action === "pause"
           ? pauseTask(taskId, projectRoot)
           : action === "stop"
             ? cancelTask(taskId, projectRoot)

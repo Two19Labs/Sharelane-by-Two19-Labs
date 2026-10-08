@@ -77,6 +77,10 @@ export interface ShareLaneTask {
   budgetTokens?: number;
   reassignments: number;
   handoffReason?: string;
+  /** You finished with it (review board "Done" or "End chat"); the office stops showing it. */
+  dismissedAt?: string;
+  /** You ended the conversation; no more follow-ups go to the agent. */
+  conversationClosedAt?: string;
   duplicateWarnings?: string[];
   createdAt: string;
   startedAt?: string;
@@ -111,6 +115,8 @@ interface TaskRow {
   budget_tokens: number | null;
   reassignments: number | null;
   handoff_reason: string | null;
+  dismissed_at: string | null;
+  conversation_closed_at: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -216,6 +222,8 @@ function fromRow(row: TaskRow): ShareLaneTask {
     budgetTokens: row.budget_tokens ?? undefined,
     reassignments: row.reassignments ?? 0,
     handoffReason: row.handoff_reason ?? undefined,
+    dismissedAt: row.dismissed_at ?? undefined,
+    conversationClosedAt: row.conversation_closed_at ?? undefined,
     createdAt: row.created_at,
     startedAt: row.started_at ?? undefined,
     finishedAt: row.finished_at ?? undefined,
@@ -508,6 +516,8 @@ function updateTask(
     "changed_files_json",
     "scope_violations_json",
     "handoff_reason",
+    "dismissed_at",
+    "conversation_closed_at",
     "started_at",
     "finished_at",
     "updated_at",
@@ -1007,6 +1017,9 @@ export function replyToTask(
 ): ShareLaneTask {
   const projectRoot = options.projectRoot ?? process.cwd();
   const task = getTask(taskId, projectRoot);
+  if (task.conversationClosedAt) {
+    throw new Error(`The conversation for task "${taskId}" was ended, so it takes no more follow-ups. Start a new task instead.`);
+  }
   // A paused task may have no session yet (it was stopped mid-run); its next
   // run then starts a fresh conversation on the same branch.
   if (task.status !== "paused" && (task.status !== "completed" || !task.sessionId)) {
@@ -1029,7 +1042,7 @@ export function replyToTask(
     database.exec("BEGIN IMMEDIATE");
     const updated = database
       .prepare(
-        `UPDATE tasks SET status = 'queued', result = NULL, error = NULL,
+        `UPDATE tasks SET status = 'queued', result = NULL, error = NULL, dismissed_at = NULL,
           worker_pid = NULL, agent_pid = NULL, finished_at = NULL,
           source_root = ?, worktree_path = ?, branch_name = ?, base_commit = ?,
           updated_at = ?
@@ -1164,6 +1177,29 @@ export function cancelTask(
     return cancelled.task;
   }
   return stopTask(taskId, "cancelled", projectRoot);
+}
+
+/**
+ * Mark a finished task as dealt with, so the office sends its employee back to
+ * the lounge. With endConversation, the conversation is also closed and takes
+ * no more follow-ups. The task branch is untouched either way.
+ */
+export function dismissTask(
+  taskId: string,
+  options: { endConversation?: boolean; projectRoot?: string } = {},
+): ShareLaneTask {
+  const projectRoot = options.projectRoot ?? process.cwd();
+  const task = getTask(taskId, projectRoot);
+  if (!persistedTerminalStatuses.has(task.status)) {
+    throw new Error(`Only a finished task can be sent back to the lounge; this one is ${task.status}. Stop it first.`);
+  }
+  const now = new Date().toISOString();
+  const fields: Record<string, string> = { dismissed_at: task.dismissedAt ?? now, updated_at: now };
+  if (options.endConversation) fields.conversation_closed_at = task.conversationClosedAt ?? now;
+  const updated = updateTask(taskId, fields, projectRoot, [...persistedTerminalStatuses]);
+  if (!updated.changed) throw new Error(`Task "${taskId}" changed before it could be dismissed.`);
+  writeTaskFile(updated.task, projectRoot);
+  return updated.task;
 }
 
 /**

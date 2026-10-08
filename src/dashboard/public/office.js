@@ -116,19 +116,6 @@ function agentTasks(state, name) {
   return state.tasks.filter((task) => task.agent === name);
 }
 
-/** Pick the task that best explains what an agent is doing right now. */
-function primaryTask(state, name) {
-  const tasks = agentTasks(state, name);
-  return (
-    tasks.find((task) => task.status === "running") ??
-    tasks.find((task) => task.status === "queued") ??
-    tasks.find((task) => task.status === "paused") ??
-    tasks.find((task) => ["needs_reassignment", "failed", "orphaned"].includes(task.status) && recent(task.updatedAt)) ??
-    tasks.find((task) => task.status === "completed" && task.changedFiles.length && recent(task.finishedAt ?? task.updatedAt)) ??
-    tasks[0]
-  );
-}
-
 function modeFor(agent, task) {
   if (task?.status === "running") return "work";
   if (task?.status === "queued") return "queued";
@@ -507,10 +494,11 @@ export function createOffice(ui) {
     setTimeout(() => item.remove(), 6000);
   }
 
+  let lastResult = null; // the last control response, e.g. { taskId } after assigning
   async function act(label, path, body, button) {
     if (button) button.disabled = true;
     try {
-      await control(path, body);
+      lastResult = await control(path, body);
       toast(label, "good");
       if (typeof onChange === "function") await onChange();
       return true;
@@ -524,29 +512,87 @@ export function createOffice(ui) {
   let onChange = null;
 
   // ---------- employees ----------
-  function lookFor(name, index) {
-    return looks[name] ?? spareLooks[index % spareLooks.length];
+  // One employee per task the office should show (working, paused, needing
+  // you, or waiting on the review board), keyed by task ID. An agent with none
+  // of those keeps one idle employee (key "agent:<name>") in the lounge. When
+  // tasks come and go, existing employees of the same agent are reused before
+  // new ones walk in through the front door; extras walk out again.
+  let nextIndex = 0;
+  const agentLook = (agentName, agentIndex) => looks[agentName] ?? spareLooks[agentIndex % spareLooks.length];
+  const hairs = ["#2b2230", "#7a3b22", "#c9c9d1", "#e3bf55", "#5a3825", "#1f1f26", "#a0522d"];
+  const hashOf = (text) => [...text].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 7);
+
+  /** A short name from the task: its first meaningful folder or file in scope, else a word from its title. */
+  function taskLabel(task) {
+    const skip = new Set(["src", "lib", "app", "apps", "packages", "source", "public", "dist", "docs", "test", "tests"]);
+    const nice = (word) => {
+      const clean = word.replace(/\.[a-z0-9]+$/i, "").replace(/[-_](agent|claude|codex|antigravity)$/i, "");
+      const text = clean.length <= 3 ? clean.toUpperCase() : clean[0].toUpperCase() + clean.slice(1);
+      return text.length > 16 ? `${text.slice(0, 15)}…` : text;
+    };
+    for (const pattern of task.scope ?? []) {
+      const word = pattern.split("/").find((part) => part && !/[*?{}[\]]/.test(part) && !skip.has(part.toLowerCase()));
+      if (word) return nice(word);
+    }
+    const stop = new Set(["build", "add", "create", "make", "write", "fix", "implement", "update", "change", "a", "an", "the",
+      "simple", "small", "quick", "new", "basic", "please", "some", "me", "my", "to", "for", "of", "in", "and", "with", "can", "you", "game", "function"]);
+    const word = (task.title.toLowerCase().match(/[a-z0-9][a-z0-9-]*/g) ?? []).find((candidate) => !stop.has(candidate));
+    return word ? nice(word) : "Task";
   }
 
-  function targetFor(employee, index) {
-    const desk = deskSlots[index % deskSlots.length];
-    const seat = [desk[0] + 1, desk[1] + 1];
+  const showsInOffice = (task) => !task.dismissedAt && (
+    ["running", "queued", "paused"].includes(task.status) ||
+    (["needs_reassignment", "failed", "orphaned"].includes(task.status) && recent(task.updatedAt)) ||
+    (task.status === "completed" && task.changedFiles.length > 0 && recent(task.finishedAt ?? task.updatedAt)));
+  const deskModes = new Set(["work", "queued", "paused"]);
+
+  function makeEmployee(key, agentName, agentIndex, spawn) {
+    const employee = {
+      key, agentName, index: nextIndex++, look: { ...agentLook(agentName, agentIndex) },
+      x: spawn[0], y: spawn[1], path: [], dir: "up", step: 0, pose: "stand",
+      mode: "idle", target: null, wanderAt: 0, stepClock: 0, desk: null, leaving: false, name: "",
+    };
+    employee.element = h("button", { class: "employee", type: "button", onclick: () => select(employee.key) },
+      h("span", { class: "bubble", "aria-hidden": "true" }),
+      h("span", { class: "plate" }, h("span", { class: "dot", "aria-hidden": "true" }), h("span", { class: "plate-name" })));
+    overlay.append(employee.element);
+    return employee;
+  }
+
+  function rekey(employee, key) {
+    employees.delete(employee.key);
+    if (selected === employee.key) selected = key;
+    employee.key = key;
+    employees.set(key, employee);
+  }
+
+  function removeEmployee(employee) {
+    employee.element.remove();
+    employees.delete(employee.key);
+    if (selected === employee.key && dialog.open) dialog.close();
+  }
+
+  function targetFor(employee) {
+    if (employee.leaving) return { tile: door, pose: "stand", dir: "down" };
     switch (employee.mode) {
       case "work":
       case "queued":
-      case "paused":
-        return { tile: seat, pose: "sit", dir: "up" };
+      case "paused": {
+        if (employee.desk === null) return null; // every desk is taken; wait in the lounge
+        const desk = deskSlots[employee.desk];
+        return { tile: [desk[0] + 1, desk[1] + 1], pose: "sit", dir: "up" };
+      }
       case "review": {
-        const reviewers = [...employees.values()].filter((other) => other.mode === "review");
+        const reviewers = [...employees.values()].filter((other) => other.mode === "review" && !other.leaving);
         return { tile: reviewSpots[Math.max(0, reviewers.indexOf(employee)) % reviewSpots.length], pose: "stand", dir: "up" };
       }
       case "needs": {
-        const waiting = [...employees.values()].filter((other) => other.mode === "needs");
+        const waiting = [...employees.values()].filter((other) => other.mode === "needs" && !other.leaving);
         const spot = meetingSpots[Math.max(0, waiting.indexOf(employee)) % meetingSpots.length];
         return { tile: spot, pose: "stand", dir: spot[1] === 11 ? "down" : "up" };
       }
       case "tired": {
-        const tired = [...employees.values()].filter((other) => other.mode === "tired");
+        const tired = [...employees.values()].filter((other) => other.mode === "tired" && !other.leaving);
         return { tile: [sofaSpots[Math.max(0, tired.indexOf(employee)) % sofaSpots.length][0], 4], pose: "sleep", dir: "down" };
       }
       default:
@@ -556,38 +602,68 @@ export function createOffice(ui) {
 
   let firstSync = true;
   function syncEmployees() {
-    const names = state.agents.map((agent) => agent.name);
-    for (const name of [...employees.keys()]) {
-      if (!names.includes(name)) {
-        employees.get(name).element.remove();
-        employees.delete(name);
+    // 1. Who should be in the office right now.
+    const wanted = [];
+    state.agents.forEach((agent, agentIndex) => {
+      const tasks = agentTasks(state, agent.name);
+      const shown = tasks.filter(showsInOffice);
+      for (const task of shown) wanted.push({ key: task.id, agent, agentIndex, task, mode: modeFor(agent, task) });
+      // No task to show: one idle employee who remembers the latest task.
+      if (!shown.length) wanted.push({ key: `agent:${agent.name}`, agent, agentIndex, task: tasks[0], mode: modeFor(agent, undefined), base: true });
+    });
+    // 2. Match them to employees: same key first, then reuse one of the same agent, then hire.
+    const unmatched = [];
+    const spare = new Set([...employees.values()].filter((employee) => !wanted.some((want) => want.key === employee.key)));
+    for (const want of wanted) {
+      if (employees.has(want.key)) continue;
+      const reuse = [...spare].sort((a, b) => Number(a.leaving) - Number(b.leaving)).find((employee) => employee.agentName === want.agent.name);
+      if (reuse) {
+        spare.delete(reuse);
+        reuse.leaving = false;
+        rekey(reuse, want.key);
+      } else {
+        unmatched.push(want);
       }
     }
-    state.agents.forEach((agent, index) => {
-      let employee = employees.get(agent.name);
-      if (!employee) {
-        const element = h("button", { class: "employee", type: "button", onclick: () => select(agent.name) },
-          h("span", { class: "bubble", "aria-hidden": "true" }),
-          h("span", { class: "plate" }, h("span", { class: "dot", "aria-hidden": "true" }), h("span", { class: "plate-name" })));
-        overlay.append(element);
-        employee = {
-          name: agent.name, index, look: lookFor(agent.name, index), element,
-          x: door[0], y: door[1], path: [], dir: "up", step: 0, pose: "stand",
-          mode: "idle", target: null, wanderAt: 0, stepClock: 0,
-        };
-        employees.set(agent.name, employee);
-      }
-      const task = primaryTask(state, agent.name);
-      employee.index = index;
-      employee.agent = agent;
-      employee.task = task;
-      employee.mode = modeFor(agent, task);
-    });
+    for (const want of unmatched) {
+      employees.set(want.key, makeEmployee(want.key, want.agent.name, want.agentIndex, door));
+    }
+    for (const employee of spare) {
+      employee.leaving = true;
+      employee.desk = null;
+    }
+    // 3. Update each one: mode, desk, name, look.
+    const sameName = new Map();
+    for (const want of wanted) {
+      const employee = employees.get(want.key);
+      employee.agent = want.agent;
+      employee.task = want.task;
+      employee.base = Boolean(want.base);
+      employee.mode = want.mode;
+      if (!deskModes.has(employee.mode)) employee.desk = null;
+      const base = employee.base ? want.agent.displayName : `${taskLabel(want.task)} ${want.agent.displayName.split(" ")[0]}`;
+      const count = (sameName.get(base) ?? 0) + 1;
+      sameName.set(base, count);
+      employee.name = count > 1 ? `${base} ${count}` : base;
+      // Extra workers of the same agent keep its shirt but get their own hair.
+      employee.look.hair = employee.base ? agentLook(want.agent.name, want.agentIndex).hair : hairs[hashOf(want.key) % hairs.length];
+    }
+    // 4. Desks: keep the one you have; otherwise take the first free desk.
+    const taken = new Set([...employees.values()].map((employee) => employee.desk).filter((desk) => desk !== null));
     for (const employee of employees.values()) {
-      const target = targetFor(employee, employee.index);
+      if (employee.leaving || !deskModes.has(employee.mode) || employee.desk !== null) continue;
+      const free = deskSlots.findIndex((_, slot) => !taken.has(slot));
+      if (free >= 0) {
+        employee.desk = free;
+        taken.add(free);
+      }
+    }
+    // 5. Targets, paths, and labels.
+    for (const employee of employees.values()) {
+      const target = targetFor(employee);
       if (firstSync) {
         // On page load everyone starts where they belong; later changes are walked.
-        const spot = target?.tile ?? [lounge.x1 + 1 + employee.index * 2, lounge.y1 + 1 + (employee.index % 2)];
+        const spot = target?.tile ?? [lounge.x1 + 1 + ((employee.index * 2) % 7), lounge.y1 + 1 + (employee.index % 2)];
         employee.x = spot[0];
         employee.y = spot[1];
       }
@@ -599,15 +675,16 @@ export function createOffice(ui) {
       if (!goal && employee.target) employee.goal = null;
       employee.target = target;
       const info = modes[employee.mode];
-      const name = employee.agent.displayName;
-      employee.element.setAttribute("aria-label", `${name}: ${info.label}. ${statusLine(employee.mode, employee.task)}`);
-      employee.element.setAttribute("aria-pressed", String(selected === employee.name));
-      employee.element.className = `employee ${info.tone}${selected === employee.name ? " selected" : ""}`;
-      employee.element.querySelector(".plate-name").textContent = name;
+      employee.element.setAttribute("aria-label", employee.leaving
+        ? `${employee.name}: leaving`
+        : `${employee.name}: ${info.label}. ${statusLine(employee.mode, employee.base ? undefined : employee.task)}`);
+      employee.element.setAttribute("aria-pressed", String(selected === employee.key));
+      employee.element.className = `employee ${employee.leaving ? "" : info.tone}${selected === employee.key ? " selected" : ""}`;
+      employee.element.querySelector(".plate-name").textContent = employee.name;
       const bubble = employee.element.querySelector(".bubble");
-      bubble.textContent = info.bubble;
-      bubble.hidden = !info.bubble;
-      bubble.className = `bubble ${employee.mode}`;
+      bubble.textContent = employee.leaving ? "👋" : info.bubble;
+      bubble.hidden = !employee.leaving && !info.bubble;
+      bubble.className = `bubble ${employee.leaving ? "leaving" : employee.mode}`;
     }
     firstSync = false;
   }
@@ -658,22 +735,17 @@ export function createOffice(ui) {
     drawFloor(ctx);
     drawWalls(ctx);
     const list = [...employees.values()];
-    const screens = list
-      .sort((a, b) => a.index - b.index)
-      .map((employee) => {
-        const seated = employee.pose === "sit";
-        if (employee.mode === "work" && seated) return "on";
-        if (employee.mode === "paused") return "paused";
-        if (employee.mode === "needs") return "alert";
-        return "off";
-      });
-    while (screens.length < 3) screens.push("off");
+    // Every desk is drawn; its monitor shows what the person sitting there is doing.
+    const screens = deskSlots.map((_, slot) => {
+      const sitter = list.find((employee) => employee.desk === slot && !employee.leaving);
+      if (sitter?.mode === "work" && sitter.pose === "sit") return "on";
+      if (sitter?.mode === "paused") return "paused";
+      return "off";
+    });
     drawFurniture(ctx, frame, screens, state?.notices.filter((notice) => !notice.delivered).length ?? 0);
     // Empty chairs at desks nobody is sitting at.
-    screens.forEach((_, index) => {
-      const [x, y] = deskSlots[index];
-      const sitting = list.some((employee) => employee.pose === "sit" && employee.index === index);
-      if (!sitting) drawChair(ctx, x + 1, y + 1);
+    deskSlots.forEach(([x, y], slot) => {
+      if (!list.some((employee) => employee.pose === "sit" && employee.desk === slot)) drawChair(ctx, x + 1, y + 1);
     });
     for (const employee of [...list].sort((a, b) => a.y - b.y)) {
       const px = employee.x * T;
@@ -694,7 +766,12 @@ export function createOffice(ui) {
     const seconds = Math.min(0.1, (now - last) / 1000);
     last = now;
     frame += 1;
-    for (const employee of employees.values()) moveEmployee(employee, seconds);
+    for (const employee of [...employees.values()]) {
+      moveEmployee(employee, seconds);
+      if (employee.leaving && !employee.path.length && Math.round(employee.x) === door[0] && Math.round(employee.y) === door[1]) {
+        removeEmployee(employee);
+      }
+    }
     draw();
     requestAnimationFrame(loop);
   }
@@ -728,20 +805,19 @@ export function createOffice(ui) {
     return small;
   }
 
-  const hotbarSlots = new Map();
   function renderHotbar() {
-    for (const employee of employees.values()) {
-      let slot = hotbarSlots.get(employee.name);
-      if (!slot) {
-        slot = h("button", { class: "slot", type: "button", onclick: () => select(employee.name) },
+    const present = [...employees.values()].filter((employee) => !employee.leaving).sort((a, b) => a.agentName.localeCompare(b.agentName) || a.index - b.index);
+    for (const employee of present) {
+      if (!employee.slot || employee.slotHair !== employee.look.hair) {
+        employee.slot = h("button", { class: "slot", type: "button", onclick: () => select(employee.key) },
           portrait(employee, 2), h("span", { class: "slot-name" }), h("span", { class: "slot-dot", "aria-hidden": "true" }));
-        hotbarSlots.set(employee.name, slot);
+        employee.slotHair = employee.look.hair;
       }
       const info = modes[employee.mode];
-      slot.className = `slot ${info.tone}${selected === employee.name ? " selected" : ""}`;
-      slot.querySelector(".slot-name").textContent = employee.agent.displayName;
-      slot.setAttribute("aria-label", `${employee.agent.displayName}: ${info.label}`);
-      slot.title = `${employee.agent.displayName}: ${info.label}`;
+      employee.slot.className = `slot ${info.tone}${selected === employee.key ? " selected" : ""}`;
+      employee.slot.querySelector(".slot-name").textContent = employee.name;
+      employee.slot.setAttribute("aria-label", `${employee.name}: ${info.label}`);
+      employee.slot.title = `${employee.name}: ${info.label}`;
     }
     if (!slots.assign) {
       slots.assign = h("button", { class: "slot action", type: "button", onclick: () => select("new"), title: "Assign a task" },
@@ -752,7 +828,7 @@ export function createOffice(ui) {
     const unread = state.notices.filter((notice) => !notice.delivered).length;
     slots.mail.querySelector(".slot-name").textContent = unread ? `Notices (${unread})` : "Notices";
     mailSpot.setAttribute("aria-label", `Mailbox: ${unread} notice${unread === 1 ? "" : "s"} waiting for an agent`);
-    const wanted = [...hotbarSlots.values(), slots.assign, slots.mail];
+    const wanted = [...present.map((employee) => employee.slot), slots.assign, slots.mail];
     // Re-append only when the set changes, so keyboard focus survives refreshes.
     if (wanted.some((slot, index) => hotbar.children[index] !== slot) || hotbar.children.length !== wanted.length) {
       hotbar.replaceChildren(...wanted);
@@ -804,8 +880,9 @@ export function createOffice(ui) {
   }
 
   /** Open an employee's pop-up on one task and tab, e.g. from the review board. */
-  function openTask(agentName, taskId, view) {
-    select(agentName);
+  function openTask(task, view) {
+    select(employees.has(task.id) ? task.id : `agent:${task.agent}`);
+    const taskId = task.id;
     focusTaskId = taskId;
     pinnedTask = true;
     tab = view;
@@ -912,6 +989,20 @@ export function createOffice(ui) {
     if (task.branchName) {
       buttons.push(h("button", { class: "btn", type: "button", onclick: () => showTab("changes") }, "🔍 Check output"));
     }
+    if (["completed", "failed", "cancelled"].includes(task.status)) {
+      if (!task.dismissedAt) {
+        buttons.push(h("button", { class: "btn primary", type: "button", title: "You are done with it: they leave the review board. You can still follow up later.",
+          onclick: (event) => act("Done. They are back in the lounge.", path("dismiss"), {}, event.currentTarget) }, "✓ Done → lounge"));
+      }
+      if (!task.conversationClosedAt) {
+        buttons.push(h("button", { class: "btn danger", type: "button", title: "Close this conversation for good. The branch stays for you to merge.",
+          onclick: (event) => {
+            if (confirm("End this chat? The agent leaves the review board and takes no more follow-ups on this task. Its branch stays for you to merge or delete.")) {
+              act("Chat ended.", path("dismiss"), { endConversation: true }, event.currentTarget);
+            }
+          } }, "End chat"));
+      }
+    }
     if (["running", "queued", "paused", "needs_reassignment"].includes(task.status)) {
       buttons.push(h("button", { class: "btn danger", type: "button", onclick: (event) => {
         if (confirm("Stop this task? Its changes so far stay on the task branch, but it cannot be resumed.")) {
@@ -924,7 +1015,7 @@ export function createOffice(ui) {
 
   function composer(task) {
     // Built once per focused task so typing is never interrupted by refreshes.
-    const canTalk = task.status === "completed" || task.status === "paused";
+    const canTalk = (task.status === "completed" || task.status === "paused") && !task.conversationClosedAt;
     const textarea = h("textarea", { rows: 3, placeholder: task.status === "paused"
       ? "Optional: add an instruction, then resume"
       : "Ask a follow-up in the same conversation", "aria-label": "Message to the agent" });
@@ -936,7 +1027,7 @@ export function createOffice(ui) {
       const ok = await act(task.status === "paused" ? "Resumed with your note." : "Message sent. The agent is working on it.",
         `/api/tasks/${encodeURIComponent(task.id)}/${task.status === "paused" ? "resume" : "reply"}`, { message }, send);
       if (ok) textarea.value = "";
-    } }, textarea, h("div", { class: "row" }, h("span", { class: "muted", text: canTalk ? "" : "You can message the agent once this run finishes or is paused." }), send));
+    } }, textarea, h("div", { class: "row" }, h("span", { class: "muted", text: canTalk ? "" : task.conversationClosedAt ? "You ended this chat. Start a new task to continue the work." : "You can message the agent once this run finishes or is paused." }), send));
     textarea.disabled = !canTalk;
     send.disabled = !canTalk;
     return form;
@@ -956,7 +1047,8 @@ export function createOffice(ui) {
       if (scope.value.trim()) body.scope = scope.value;
       if (budget.value) body.budgetTokens = Number(budget.value);
       const ok = await act("Task assigned. Watch them head to their desk.", "/api/tasks", body, submit);
-      if (ok) { prompt.value = ""; scope.value = ""; budget.value = ""; select(agentSelect.value); }
+      const lastAssigned = lastResult?.taskId;
+      if (ok) { prompt.value = ""; scope.value = ""; budget.value = ""; select(employees.has(lastAssigned) ? lastAssigned : `agent:${agentSelect.value}`); }
     } },
     h("label", {}, h("span", { text: "Who" }), agentSelect),
     h("label", {}, h("span", { text: "Task" }), prompt),
@@ -973,20 +1065,21 @@ export function createOffice(ui) {
           h("div", { class: "text", text: notice.message }))) : [h("li", { class: "meta", text: "No notices." })])];
     }
     if (lobby === "review") {
-      const ready = state.tasks.filter((task) => task.status === "completed" && task.changedFiles.length && task.branchName);
+      const ready = state.tasks.filter((task) => task.status === "completed" && task.changedFiles.length && task.branchName && !task.dismissedAt);
       return [h("div", { class: "panel-top" }, h("h2", { text: "Review board" }), closeButton()), h("p", { class: "muted", text: "Finished work waits on its own branch. Review it with git before merging." }),
         h("ul", { class: "list" }, ready.length ? ready.slice(0, 12).map((task) => h("li", {},
           h("div", { class: "row" }, h("strong", { text: task.title || task.id }), h("span", { class: "meta", text: `${task.agent} · ${ago(task.finishedAt ?? task.updatedAt)}` })),
           h("div", { class: "meta", text: task.changedFiles.join(", ") }),
           h("div", { class: "row" },
             h("code", { class: "command", text: `git merge ${task.branchName}` }),
-            h("button", { class: "btn", type: "button", onclick: () => openTask(task.agent, task.id, "changes") }, "🔍 Check output")))) : [h("li", { class: "meta", text: "Nothing waiting for review." })])];
+            h("button", { class: "btn", type: "button", onclick: () => openTask(task, "changes") }, "🔍 Check output"),
+            h("button", { class: "btn", type: "button", onclick: (event) => act("Done. They are back in the lounge.", `/api/tasks/${encodeURIComponent(task.id)}/dismiss`, {}, event.currentTarget) }, "✓ Done")))) : [h("li", { class: "meta", text: "Nothing waiting for review." })])];
     }
     return [h("div", { class: "panel-top" }, h("h2", { text: "Your team" }), closeButton()), h("p", { class: "muted", text: "Click someone on the floor, or below, to see what they're doing and to direct them." }),
       h("ul", { class: "team" }, [...employees.values()].map((employee) => h("li", {},
-        h("button", { class: "team-row", type: "button", onclick: () => select(employee.name) },
+        h("button", { class: "team-row", type: "button", onclick: () => select(employee.key) },
           portrait(employee, 2),
-          h("span", { class: "team-text" }, h("strong", { text: employee.agent.displayName }), h("span", { class: "muted", text: statusLine(employee.mode, employee.task) })),
+          h("span", { class: "team-text" }, h("strong", { text: employee.name }), h("span", { class: "muted", text: statusLine(employee.mode, employee.base ? undefined : employee.task) })),
           statusPill({ tone: modes[employee.mode].tone, icon: modes[employee.mode].bubble || "•", label: modes[employee.mode].label }))))),
       h("button", { class: "btn primary wide", type: "button", onclick: () => select("new") }, "+ Assign a new task")];
   }
@@ -1016,17 +1109,17 @@ export function createOffice(ui) {
     }
     if (!pinnedTask) focusTaskId = employee.task?.id ?? null;
     const task = focusTaskId ? state.tasks.find((candidate) => candidate.id === focusTaskId) ?? employee.task : null;
-    const skeletonKey = `${employee.name}|${task?.id ?? ""}|${task?.status ?? ""}`;
+    const skeletonKey = `${employee.key}|${task?.id ?? ""}|${task?.status ?? ""}`;
     if (panelFor !== skeletonKey) {
       panelFor = skeletonKey;
       panel.replaceChildren(
         h("div", { class: "panel-top" },
-          h("div", { class: "who" }, portrait(employee, 3), h("div", {}, h("h2", { text: employee.agent.displayName }), h("p", { class: "muted mono", text: employee.name }))),
+          h("div", { class: "who" }, portrait(employee, 3), h("div", {}, h("h2", { text: employee.name }), h("p", { class: "muted", text: employee.base ? employee.agent.displayName : `${employee.agent.displayName} · one of its tasks` }))),
           closeButton()),
         h("p", { class: "mood", "data-part": "mood" }),
         h("section", { class: "card" }, h("h3", { text: "Allowance" }), h("div", { "data-part": "quota" })),
         task ? h("section", { class: "card" },
-          h("div", { class: "row" }, h("h3", { text: "Current task" }), h("span", { "data-part": "status" })),
+          h("div", { class: "row" }, h("h3", { text: employee.base ? "Latest task" : "Current task" }), h("span", { "data-part": "status" })),
           h("p", { class: "task-name", text: task.title || task.id }),
           h("dl", { class: "facts", "data-part": "facts" }),
           h("div", { class: "controls" }, taskControls(task)),
@@ -1036,7 +1129,7 @@ export function createOffice(ui) {
               onclick: () => showTab(value) }, label))),
           h("div", { "data-part": "body" })) : h("section", { class: "card" }, h("p", { class: "muted", text: "No tasks yet." })),
         h("section", { class: "card" }, h("h3", { text: "Task history" }), h("ul", { class: "history", "data-part": "history" })),
-        h("details", { class: "card" }, h("summary", { text: `Give ${employee.agent.displayName} a new task` }), newTaskForm(employee.name)));
+        h("details", { class: "card" }, h("summary", { text: `Give ${employee.agent.displayName} a new task` }), newTaskForm(employee.agentName)));
     }
     const part = (name) => panel.querySelector(`[data-part="${name}"]`);
     part("mood").textContent = statusLine(employee.mode, employee.task);
@@ -1076,7 +1169,7 @@ export function createOffice(ui) {
             : message.content))) : [h("p", { class: "muted", text: "Loading the conversation…" })])));
       }
     }
-    const history = agentTasks(state, employee.name).slice(0, 10);
+    const history = agentTasks(state, employee.agentName).slice(0, 10);
     const historyList = part("history");
     const historyKey = `${task?.id}|${history.map((item) => `${item.id}:${item.status}:${item.updatedAt}`).join(",")}|${Math.floor(Date.now() / 60_000)}`;
     if (historyList.dataset.signature === historyKey) return;

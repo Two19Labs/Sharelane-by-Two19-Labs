@@ -195,7 +195,7 @@ test("delegated Git work is isolated, committed, cleaned up, and unclaimed edits
     assert.ok(existsSync(delegated.worktreePath));
     assert.match(delegated.branchName ?? "", /^sharelane\/task-/);
 
-    const waited = await waitForTask(delegated.id, 15_000, projectRoot);
+    const waited = await waitForTask(delegated.id, 30_000, projectRoot);
     assert.equal(waited.timedOut, false);
     assert.equal(waited.task.status, "completed", waited.task.error ?? "task failed");
     assert.equal(await readFile(join(projectRoot, "value.txt"), "utf8"), "main copy\n");

@@ -6,7 +6,7 @@ INSERT INTO schema_info (version)
 SELECT 1
 WHERE NOT EXISTS (SELECT 1 FROM schema_info);
 
-UPDATE schema_info SET version = 6;
+UPDATE schema_info SET version = 7;
 
 CREATE TABLE IF NOT EXISTS chunks (
   id TEXT PRIMARY KEY,
@@ -64,6 +64,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   budget_tokens INTEGER,
   reassignments INTEGER NOT NULL DEFAULT 0,
   handoff_reason TEXT,
+  dismissed_at TEXT,
+  conversation_closed_at TEXT,
   created_at TEXT NOT NULL,
   started_at TEXT,
   finished_at TEXT,

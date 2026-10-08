@@ -32,6 +32,8 @@ const taskColumns: Record<string, string> = {
   budget_tokens: "INTEGER",
   reassignments: "INTEGER NOT NULL DEFAULT 0",
   handoff_reason: "TEXT",
+  dismissed_at: "TEXT",
+  conversation_closed_at: "TEXT",
 };
 
 const statusCheckPattern = /status TEXT NOT NULL CHECK \(status IN \([^)]*\)\)/;
@@ -89,7 +91,7 @@ function migrateExistingDatabase(database: DatabaseSync): void {
     }
   }
   allowCurrentStatuses(database);
-  database.exec("UPDATE schema_info SET version = 6;");
+  database.exec("UPDATE schema_info SET version = 7;");
 }
 
 export function getShareLanePaths(projectRoot = process.cwd()): ShareLanePaths {

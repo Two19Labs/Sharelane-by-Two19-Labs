@@ -223,4 +223,18 @@ test("controls need the page's token and origin, then assign, pause, resume, rep
   const replied = await post(`/api/tasks/${slowId}/reply`, { message: "thanks" });
   assert.equal(replied.status, 200, replied.body.error ?? "");
   assert.equal((await waitForTask(slowId, 30_000, projectRoot)).task.result, "Codex heard: thanks");
+
+  // Review board: "Done" sends them to the lounge but a follow-up brings them back;
+  // "End chat" closes the conversation for good.
+  assert.equal((await post(`/api/tasks/${slowId}/dismiss`, {})).status, 200);
+  assert.ok(getTask(slowId, projectRoot).dismissedAt);
+  assert.equal(getTask(slowId, projectRoot).conversationClosedAt, undefined);
+  assert.equal((await post(`/api/tasks/${slowId}/reply`, { message: "one more thing" })).status, 200);
+  assert.equal(getTask(slowId, projectRoot).dismissedAt, undefined, "a follow-up puts them back to work");
+  await waitForTask(slowId, 30_000, projectRoot);
+  assert.equal((await post(`/api/tasks/${slowId}/dismiss`, { endConversation: true })).status, 200);
+  assert.ok(getTask(slowId, projectRoot).conversationClosedAt);
+  const refused = await post(`/api/tasks/${slowId}/reply`, { message: "are you there?" });
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error ?? "", /conversation .* was ended/);
 });

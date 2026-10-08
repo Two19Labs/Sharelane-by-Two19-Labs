@@ -235,10 +235,11 @@ test("cancellation wins over a running worker", async () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
     assert.equal(getTask(delegated.id, projectRoot).status, "cancelled");
   } finally {
+    // The stopped worker may still be exiting (its cwd is this folder) under load.
     await rm(projectRoot, {
       recursive: true,
       force: true,
-      maxRetries: 10,
+      maxRetries: 50,
       retryDelay: 100,
     });
   }
@@ -311,7 +312,7 @@ test("an older database is upgraded in place to accept paused tasks", async () =
       const row = upgraded.prepare("SELECT status, prompt FROM tasks WHERE id = 'task-old'").get() as { status: string; prompt: string };
       assert.deepEqual({ ...row }, { status: "paused", prompt: "old work" });
       const version = upgraded.prepare("SELECT version FROM schema_info").get() as { version: number };
-      assert.equal(version.version, 6);
+      assert.equal(version.version, 7);
     } finally {
       upgraded.close();
     }

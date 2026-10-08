@@ -42,6 +42,8 @@ export interface DashboardTask {
   budgetTokens?: number;
   reassignments: number;
   handoffReason?: string;
+  dismissedAt?: string;
+  conversationClosedAt?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -134,6 +136,8 @@ function toDashboardTask(task: ShareLaneTask, projectRoot: string): DashboardTas
     budgetTokens: task.budgetTokens,
     reassignments: task.reassignments,
     handoffReason: task.handoffReason,
+    dismissedAt: task.dismissedAt,
+    conversationClosedAt: task.conversationClosedAt,
     error: task.error ? firstLine(task.error) : undefined,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
