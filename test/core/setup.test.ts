@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -20,7 +20,7 @@ async function fakePath(root: string, commands: string[]): Promise<NodeJS.Proces
     }
   }
   const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PATH"),
+    Object.entries(process.env).filter(([key]) => !["PATH", "CODEX_HOME"].includes(key.toUpperCase())),
   );
   return { ...env, PATH: bin };
 }
@@ -59,12 +59,14 @@ test("init wires detected Claude and Antigravity to the installed package and sk
       calls.push([command, ...args]);
       return { status: 0, output: "" };
     };
-    const report = setupProject({ projectRoot, env, runCommand });
+    const homeDir = join(scratch, "home");
+    const report = setupProject({ projectRoot, env, runCommand, homeDir });
     const output = report.lines.join("\n");
     assert.deepEqual(report.detected, ["claude", "antigravity"]);
     assert.match(output, /codex: `codex` is not on PATH; skipped\./);
     assert.match(output, /mcp\(sharelane\/\*\)/);
     assert.equal(calls.length, 0);
+    assert.equal(existsSync(homeDir), false, "without --yes, global settings are untouched");
 
     const claude = await readJson(join(projectRoot, ".mcp.json"));
     assert.equal(claude.other, true);
@@ -87,21 +89,47 @@ test("init wires detected Claude and Antigravity to the installed package and sk
 
     // Running init again changes nothing.
     const before = await readFile(join(projectRoot, ".mcp.json"), "utf8");
-    setupProject({ projectRoot, env, runCommand });
+    setupProject({ projectRoot, env, runCommand, homeDir });
     assert.equal(await readFile(join(projectRoot, ".mcp.json"), "utf8"), before);
+  });
+});
+
+test("init --yes adds Antigravity's global allow rule once, keeping other settings", async () => {
+  await withProject(async (projectRoot, scratch) => {
+    const env = await fakePath(scratch, ["agy"]);
+    const homeDir = join(scratch, "home");
+    const settingsPath = join(homeDir, ".gemini", "antigravity-cli", "settings.json");
+    await mkdir(join(homeDir, ".gemini", "antigravity-cli"), { recursive: true });
+    await writeFile(settingsPath, JSON.stringify({ colorScheme: "dark", permissions: { allow: ["command(git)"] } }));
+
+    const output = setupProject({ projectRoot, env, homeDir, yes: true }).lines.join("\n");
+    assert.match(output, /allowed ShareLane tools globally/);
+    const settings = await readJson(settingsPath);
+    assert.equal(settings.colorScheme, "dark");
+    assert.deepEqual(settings.permissions.allow, ["command(git)", "mcp(sharelane/*)"]);
+
+    setupProject({ projectRoot, env, homeDir, yes: true });
+    assert.deepEqual((await readJson(settingsPath)).permissions.allow, ["command(git)", "mcp(sharelane/*)"]);
   });
 });
 
 test("init only prints the global Codex command unless --yes is given", async () => {
   await withProject(async (projectRoot, scratch) => {
     const env = await fakePath(scratch, ["codex"]);
+    const homeDir = join(scratch, "home");
+    const configPath = join(homeDir, ".codex", "config.toml");
     const calls: string[][] = [];
+    // Like the real `codex mcp add`, rewrite the entry without the approval line.
     const runCommand: CommandRunner = (command, args) => {
       calls.push([command, ...args]);
+      writeFileSync(
+        configPath,
+        'model = "x"\r\n\r\n[mcp_servers.sharelane]\r\ncommand = "node"\r\n\r\n[mcp_servers.sharelane.env]\r\nSHARELANE_AGENT = "codex"\r\n',
+      );
       return { status: 0, output: "" };
     };
 
-    const printed = setupProject({ projectRoot, env, runCommand }).lines.join("\n");
+    const printed = setupProject({ projectRoot, env, runCommand, homeDir }).lines.join("\n");
     assert.equal(calls.length, 0);
     assert.match(printed, /codex mcp add sharelane --env SHARELANE_AGENT=codex -- .*sharelane\.mjs.* mcp/);
     assert.match(printed, /default_tools_approval_mode = "approve"/);
@@ -109,7 +137,8 @@ test("init only prints the global Codex command unless --yes is given", async ()
     assert.equal(existsSync(join(projectRoot, ".mcp.json")), false);
     assert.equal(existsSync(join(projectRoot, ".agents")), false);
 
-    const applied = setupProject({ projectRoot, env, runCommand, yes: true }).lines.join("\n");
+    await mkdir(join(homeDir, ".codex"), { recursive: true });
+    const applied = setupProject({ projectRoot, env, runCommand, homeDir, yes: true }).lines.join("\n");
     assert.deepEqual(calls, [
       [
         "codex",
@@ -125,6 +154,11 @@ test("init only prints the global Codex command unless --yes is given", async ()
       ],
     ]);
     assert.match(applied, /Codex: added the global ShareLane MCP server/);
+    assert.match(applied, /without a prompt/);
+    assert.equal(
+      await readFile(configPath, "utf8"),
+      'model = "x"\r\n\r\n[mcp_servers.sharelane]\r\ndefault_tools_approval_mode = "approve"\r\ncommand = "node"\r\n\r\n[mcp_servers.sharelane.env]\r\nSHARELANE_AGENT = "codex"\r\n',
+    );
   });
 });
 

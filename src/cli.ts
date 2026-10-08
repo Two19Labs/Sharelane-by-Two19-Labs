@@ -18,9 +18,9 @@ function usage(): string {
     "",
     "Commands:",
     "  init       Set up shared context, approved checks, and every agent CLI found on PATH.",
-    "             --yes also runs commands that change global agent settings (Codex).",
+    "             --yes also changes global agent settings (Codex, Antigravity).",
     "  mcp        Start the ShareLane MCP server on stdio (agent CLIs launch this).",
-    `  dashboard  Serve a live, read-only dashboard on this computer (default port ${DEFAULT_DASHBOARD_PORT}).`,
+    `  dashboard  Serve the live office dashboard on this computer (default port ${DEFAULT_DASHBOARD_PORT}).`,
     "  run        Ask one configured agent to do a task and wait for its answer.",
   ].join("\n");
 }

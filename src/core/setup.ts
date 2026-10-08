@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentRegistry } from "../adapters/adapter.js";
 import { CHECKS_PATH, installDefaultChecks } from "./checks.js";
@@ -77,12 +78,49 @@ function displayCommand(command: string, args: string[]): string {
     .join(" ");
 }
 
+const ANTIGRAVITY_RULE = "mcp(sharelane/*)";
+const CODEX_APPROVE = 'default_tools_approval_mode = "approve"';
+
+/** Add Antigravity's global ShareLane allow rule. False when it was already there. */
+function allowAntigravityMcp(homeDir: string): boolean {
+  const path = join(homeDir, ".gemini", "antigravity-cli", "settings.json");
+  const settings = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
+  settings.permissions ??= {};
+  const allow: string[] = (settings.permissions.allow ??= []);
+  if (allow.includes(ANTIGRAVITY_RULE)) return false;
+  allow.push(ANTIGRAVITY_RULE);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+  return true;
+}
+
+/**
+ * Let headless Codex workers call ShareLane tools without a prompt. `codex mcp
+ * add` rewrites the server entry and drops this line, so it is re-added after.
+ */
+function approveCodexTools(codexHome: string): "added" | "present" | "missing" {
+  const path = join(codexHome, "config.toml");
+  if (!existsSync(path)) return "missing";
+  const text = readFileSync(path, "utf8");
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim() === "[mcp_servers.sharelane]");
+  if (start === -1) return "missing";
+  const next = lines.findIndex((line, index) => index > start && line.trim().startsWith("["));
+  const section = lines.slice(start + 1, next === -1 ? undefined : next);
+  if (section.some((line) => /^\s*default_tools_approval_mode\s*=/.test(line))) return "present";
+  lines.splice(start + 1, 0, CODEX_APPROVE);
+  writeFileSync(path, lines.join(text.includes("\r\n") ? "\r\n" : "\n"), "utf8");
+  return "added";
+}
+
 export interface SetupOptions {
   projectRoot: string;
   env?: NodeJS.ProcessEnv;
-  /** Run commands that change global agent settings (Codex) instead of printing them. */
+  /** Change global agent settings (Codex, Antigravity) instead of printing the steps. */
   yes?: boolean;
   runCommand?: CommandRunner;
+  /** Where global agent settings live; tests point this at a scratch folder. */
+  homeDir?: string;
 }
 
 export interface SetupReport {
@@ -95,6 +133,7 @@ export function setupProject(options: SetupOptions): SetupReport {
   const { projectRoot } = options;
   const env = options.env ?? process.env;
   const runCommand = options.runCommand ?? runWithoutShell;
+  const homeDir = options.homeDir ?? homedir();
   const done: string[] = [];
   const skipped: string[] = [];
   const todo: string[] = [];
@@ -149,9 +188,20 @@ export function setupProject(options: SetupOptions): SetupReport {
   if (found("antigravity")) {
     installAntigravityIntegration(projectRoot, launcher);
     done.push("Antigravity CLI: MCP server and edit guard in .agents/mcp_config.json and .agents/hooks.json.");
-    todo.push(
-      'Antigravity CLI: add "mcp(sharelane/*)" to permissions.allow in ~/.gemini/antigravity-cli/settings.json (its permission rules are global-only).',
-    );
+    const manual = `Antigravity CLI: add "${ANTIGRAVITY_RULE}" to permissions.allow in ~/.gemini/antigravity-cli/settings.json (its permission rules are global-only)`;
+    if (options.yes) {
+      try {
+        done.push(
+          allowAntigravityMcp(homeDir)
+            ? `Antigravity CLI: allowed ShareLane tools globally ("${ANTIGRAVITY_RULE}").`
+            : "Antigravity CLI: ShareLane tools were already allowed globally.",
+        );
+      } catch (error) {
+        todo.push(`${manual}; ShareLane could not edit it (${(error as Error).message}).`);
+      }
+    } else {
+      todo.push(`${manual}, or re-run init with --yes.`);
+    }
   }
 
   if (found("codex")) {
@@ -169,30 +219,34 @@ export function setupProject(options: SetupOptions): SetupReport {
     ];
     const codexCommand = registry.agents.codex!.command;
     const shown = displayCommand(codexCommand, args);
+    const approveStep = `Codex: so headless workers can call ShareLane, add ${CODEX_APPROVE} under [mcp_servers.sharelane] in ~/.codex/config.toml`;
     if (options.yes) {
       const result = runCommand(codexCommand, args, env);
       if (result.status === 0) {
         done.push(`Codex: added the global ShareLane MCP server (${shown}).`);
+        const codexHome = env.CODEX_HOME || join(homeDir, ".codex");
+        if (approveCodexTools(codexHome) === "missing") todo.push(`${approveStep}.`);
+        else done.push("Codex: headless workers may call ShareLane tools without a prompt.");
       } else {
         todo.push(`Codex: \`${shown}\` failed (${result.output || `exit ${result.status}`}); run it yourself.`);
+        todo.push(`${approveStep}.`);
       }
     } else {
       todo.push(`Codex uses a global MCP entry, so ShareLane did not change it. Run (or re-run init with --yes):\n    ${shown}`);
+      todo.push(`${approveStep}, or re-run init with --yes.`);
     }
-    todo.push(
-      'Codex: so headless workers can call ShareLane, add default_tools_approval_mode = "approve" under [mcp_servers.sharelane] in ~/.codex/config.toml.',
-    );
   }
 
   if (detected.length === 0) {
     todo.push("No agent CLI (claude, codex, agy) was found on PATH. Install one and run init again.");
   }
+  const sharing: string[] = [];
   if (!launcher.portable) {
-    todo.push(
-      `ShareLane is not installed in this project, so MCP configs use the absolute path ${launcher.binPath}. Install it with npm install --save-dev sharelane and run init again before committing them.`,
+    sharing.push(
+      `The agent configs use this computer's ShareLane (absolute path ${launcher.binPath}), which is fine on your own. For teammates, run npm install --save-dev sharelane and init again.`,
     );
   }
-  todo.push(
+  sharing.push(
     `Commit .sharelane/context/, ${checksPath}, AGENTS.md, CLAUDE.md, and the generated agent configs so every clone and delegated worktree sees them.`,
   );
 
@@ -206,6 +260,7 @@ export function setupProject(options: SetupOptions): SetupReport {
     ...done.map((line) => `- ${line}`),
   ];
   if (skipped.length > 0) lines.push("", "Skipped:", ...skipped.map((line) => `- ${line}`));
-  lines.push("", "Still to do:", ...todo.map((line) => `- ${line}`));
+  lines.push("", "Still to do:", ...(todo.length > 0 ? todo.map((line) => `- ${line}`) : ["- Nothing."]));
+  lines.push("", "When you share this repo:", ...sharing.map((line) => `- ${line}`));
   return { detected, lines };
 }
