@@ -1,5 +1,13 @@
 # ShareLane
 
+[![npm](https://img.shields.io/npm/v/sharelane)](https://www.npmjs.com/package/sharelane)
+[![tests](https://github.com/Two19Labs/Sharelane-by-Two19-Labs/actions/workflows/test.yml/badge.svg)](https://github.com/Two19Labs/Sharelane-by-Two19-Labs/actions/workflows/test.yml)
+[![license](https://img.shields.io/npm/l/sharelane)](LICENSE)
+
+```sh
+npm install -g sharelane
+```
+
 ShareLane is a local, open-source hub that lets coding-agent CLIs share one project memory and hand work to each other. Claude Code, Codex and Antigravity CLI (`agy`) all connect to it over MCP. From whichever agent you are chatting with, you can delegate a task to another one. It runs in the background on its own Git branch, inside the folders you allowed, and if that agent runs out of allowance another one picks up where it stopped. Everything uses your own subscription logins. There are no API keys and no cloud service.
 
 > **Status:** early (v0.1). Tested on Windows 11, with CI on Windows, macOS and Linux. Install with `npm install -g sharelane`; see [Quick start](#quick-start).
