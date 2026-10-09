@@ -2,7 +2,7 @@
 
 ShareLane is a local, open-source hub that lets coding-agent CLIs share one project memory and hand work to each other. Claude Code, Codex and Antigravity CLI (`agy`) all connect to it over MCP. From whichever agent you are chatting with, you can delegate a task to another one. It runs in the background on its own Git branch, inside the folders you allowed, and if that agent runs out of allowance another one picks up where it stopped. Everything uses your own subscription logins. There are no API keys and no cloud service.
 
-> **Status:** early (v0.1). Tested mainly on Windows 11. Not yet published to npm; see [Quick start](#quick-start).
+> **Status:** early (v0.1). Tested on Windows 11, with CI on Windows, macOS and Linux. Install with `npm install -g sharelane`; see [Quick start](#quick-start).
 
 ## Why
 
@@ -55,40 +55,42 @@ Each agent starts its own copy of the ShareLane MCP server. The copies share one
 
 ### 1. Install
 
-> **Not yet published.** Once ShareLane is on npm:
->
-> ```sh
-> npm install --save-dev sharelane
-> ```
->
-> Until then, clone this repository and link it:
->
-> ```sh
-> git clone https://github.com/Two19Labs/Sharelane-by-Two19-Labs.git sharelane
-> cd sharelane
-> npm install
-> npm link
-> # then, in your project:
-> npm link sharelane
-> ```
+Install ShareLane once per computer:
 
-**Windows:** if PowerShell refuses to run `npm` or `npx` ("running scripts is disabled"), use `npm.cmd` / `npx.cmd`, or run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
+```sh
+npm install -g sharelane
+sharelane --help
+```
+
+A global install gives Codex, whose ShareLane entry is shared by all your projects, one stable path to start it from.
+
+**Teams:** if teammates will use the same repo, also add ShareLane to the project with `npm install --save-dev sharelane`. The generated agent configs then point into the project's `node_modules`, so they work on every clone. Run commands with `npx sharelane …` in that case.
 
 ### 2. Set up your project
 
-In your project folder:
+Go to your project folder (not your home folder or `C:\Windows`). It must be a Git repository with at least one commit, because delegated workers branch from it:
 
 ```sh
-npx sharelane init
+cd path/to/your/project
+git status                       # "not a git repository"? run the next three lines
+git init
+git add -A
+git commit -m "initial commit"
+
+sharelane init --yes
 ```
 
 `init` looks for Claude Code, Codex and Antigravity and connects each one it finds:
 
 - **Claude Code:** writes the project `.mcp.json`, the edit-guard hook and a usage status line (which keeps showing your own status line). Claude asks you once to approve the project's MCP server. **Commit `.mcp.json`**: delegated Claude workers read it from their task branch.
-- **Codex:** keeps its MCP servers in your global config, so `init` prints a `codex mcp add …` command for you to run (pass `--yes` to let `init` run it). It also prints one line to add to `~/.codex/config.toml` so Codex may call ShareLane's tools without asking: `default_tools_approval_mode = "approve"` under `[mcp_servers.sharelane]`.
-- **Antigravity:** writes `.agents/mcp_config.json` and its hook. Antigravity's permission rules are global only, so add one allow rule yourself: `mcp(sharelane/*)`.
+- **Codex:** keeps its MCP servers in your global config (`~/.codex/config.toml`). With `--yes`, `init` registers ShareLane there and lets headless Codex workers call ShareLane's tools without a prompt (`default_tools_approval_mode = "approve"`).
+- **Antigravity:** writes `.agents/mcp_config.json` and its hook. Its permission rules are global only, so with `--yes`, `init` adds the allow rule `mcp(sharelane/*)` to `~/.gemini/antigravity-cli/settings.json`.
 
-It also creates `.sharelane/` with a starter context map and `.sharelane/checks.json` (see [Configuration](#configuration)).
+Without `--yes`, `init` changes nothing outside the project and prints the global steps for you to do instead.
+
+It also creates `.sharelane/` with a starter context map and `.sharelane/checks.json` (see [Configuration](#configuration)), adds ShareLane's instructions to `AGENTS.md` and `CLAUDE.md`, and adds its runtime files to `.gitignore`.
+
+At the end, `init` lists what it did, anything still to do, and what to commit when you share the repo. **Restart** any agent already open in the project so it loads ShareLane, then ask it to "fill in the ShareLane context for this project": the starter chunks are empty, and filling them in gives every agent the same overview.
 
 ### 3. Delegate your first task
 
@@ -101,16 +103,16 @@ Claude calls ShareLane's `delegate` tool and gets a task ID back right away. You
 To check that an agent is set up, you can also run it once from the terminal. This runs it directly in the current folder and waits for its answer; it is not a delegated task (no task branch, claims or handoff):
 
 ```sh
-npx sharelane run codex "say hello and list the ShareLane tools you can see"
+sharelane run codex "say hello and list the ShareLane tools you can see"
 ```
 
 ### 4. Watch it
 
 ```sh
-npx sharelane dashboard --open
+sharelane dashboard --open
 ```
 
-This opens `http://localhost:4317/`, showing running tasks with live output, claims and their expiry times, allowance meters, tokens per agent, and which context chunks are stale.
+This opens `http://localhost:4317/`: the office view, where each running agent is an employee you can click to read its conversation, check its output, pause, stop or reply. A details view shows claims, allowance meters, tokens per agent, and which context chunks are stale.
 
 ### 5. Review the result
 
@@ -121,6 +123,61 @@ git log --oneline main..sharelane/task-1a2b...
 git diff main...sharelane/task-1a2b...
 git merge sharelane/task-1a2b...   # only if you're happy with it
 ```
+
+### More projects
+
+Run `sharelane init --yes` once in each project. Each project gets its own `.sharelane/` folder, so context, tasks, claims and branches never mix between projects. What is shared across projects is the agent CLIs, your logins and subscription allowance, Codex's global ShareLane entry and Antigravity's allow rule.
+
+Start your agents from the project folder: ShareLane finds the project from the folder each agent runs in. To watch two projects at once, give the second dashboard another port: `sharelane dashboard --port 4318 --open`.
+
+### Updating
+
+```sh
+npm install -g sharelane@latest
+sharelane --help
+```
+
+Every project uses the global install, so one update covers them all. If a release changes setup, run `sharelane init --yes` again in each project; it is safe to re-run and keeps your context and settings.
+
+### Resetting or removing ShareLane from a project
+
+Close any agents running in the project first.
+
+**Start fresh** (forget tasks, conversations, claims and notes, keep the written context):
+
+```powershell
+# PowerShell
+Remove-Item -Recurse -Force .sharelane\sharelane.db*, .sharelane\runs, .sharelane\tasks, .sharelane\journal, .sharelane\notes.txt -ErrorAction SilentlyContinue
+sharelane init --yes
+```
+
+```sh
+# macOS / Linux
+rm -rf .sharelane/sharelane.db* .sharelane/runs .sharelane/tasks .sharelane/journal .sharelane/notes.txt
+sharelane init --yes
+```
+
+To reset the context too, delete the whole `.sharelane/` folder before running `init`.
+
+**Remove it completely:**
+
+1. Delete `.sharelane/`, `.agents/mcp_config.json`, `.agents/hooks.json`, `.claude/hooks/sharelane-claim-guard.mjs` and `.claude/hooks/sharelane-statusline.mjs`.
+2. Remove ShareLane's parts, and only those, from files that may hold your own settings:
+   - `.mcp.json`: the `sharelane` entry under `mcpServers`
+   - `.claude/settings.json`: the hook that runs `sharelane-claim-guard` and the `statusLine` that runs `sharelane-statusline`
+   - `AGENTS.md` and `CLAUDE.md`: everything between `<!-- sharelane-context:start -->` and `<!-- sharelane-context:end -->`
+   - `.gitignore`: the `# ShareLane local runtime` block
+3. Merge any `sharelane/task-…` branch you want to keep, then run `git worktree prune` and delete the rest with `git branch -D <name>`.
+
+The global settings serve every project, so leave them unless you are removing ShareLane from your computer entirely. In that case, also run `codex mcp remove sharelane`, remove `mcp(sharelane/*)` from `~/.gemini/antigravity-cli/settings.json`, and run `npm uninstall -g sharelane`.
+
+### Troubleshooting
+
+- **`EPERM: operation not permitted, mkdir 'C:\Windows\.sharelane…'`:** `init` sets up the folder you are in. `cd` into your project first.
+- **PowerShell says "running scripts is disabled" for `npm`, `npx`, `codex` or `sharelane`:** run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or call the `.cmd` versions (`npm.cmd`, `sharelane.cmd`).
+- **`npm warn allow-scripts … esbuild`:** harmless. esbuild's platform binary is installed anyway; to silence the warning, run `npm config set allow-scripts=esbuild --location=user`.
+- **`sharelane` is not recognized:** the global install is missing or npm's global folder is not on `PATH`. Run `npm install -g sharelane`, then open a new terminal.
+- **An agent doesn't see ShareLane's tools:** restart it from the project folder. For Claude Code, approve the `sharelane` MCP server when asked. For Codex, re-run `sharelane init --yes`.
 
 ## How it works
 
@@ -181,10 +238,15 @@ Other tools run agents in parallel (claude-squad, Conductor, Vibe Kanban), let a
 Issues and pull requests are welcome. Before a large change, open an issue to discuss it. The design is in [docs/DESIGN.md](docs/DESIGN.md) and the reasons behind decisions are in [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ```sh
+git clone https://github.com/Two19Labs/Sharelane-by-Two19-Labs.git sharelane
+cd sharelane
 npm install
 npm test
 npm run typecheck
+npm link        # puts your working copy on PATH as `sharelane`
 ```
+
+`npm link` replaces the global install; run `npm install -g sharelane` to go back to the published version.
 
 Adapters for more agent CLIs are especially welcome.
 
