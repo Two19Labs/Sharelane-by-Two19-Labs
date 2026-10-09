@@ -60,13 +60,19 @@ test("init wires detected Claude and Antigravity to the installed package and sk
       return { status: 0, output: "" };
     };
     const homeDir = join(scratch, "home");
-    const report = setupProject({ projectRoot, env, runCommand, homeDir });
+    const report = setupProject({ projectRoot, env, runCommand, homeDir, global: false });
     const output = report.lines.join("\n");
     assert.deepEqual(report.detected, ["claude", "antigravity"]);
     assert.match(output, /codex: `codex` is not on PATH; skipped\./);
     assert.match(output, /mcp\(sharelane\/\*\)/);
+    assert.match(output, /not a Git repository/);
     assert.equal(calls.length, 0);
-    assert.equal(existsSync(homeDir), false, "without --yes, global settings are untouched");
+    assert.equal(existsSync(homeDir), false, "with --no-global, global settings are untouched");
+
+    // Claude's project server is pre-approved in the personal, uncommitted settings.
+    const local = await readJson(join(projectRoot, ".claude", "settings.local.json"));
+    assert.deepEqual(local.enabledMcpjsonServers, ["sharelane"]);
+    assert.match(await readFile(join(projectRoot, ".gitignore"), "utf8"), /\.claude\/settings\.local\.json/);
 
     const claude = await readJson(join(projectRoot, ".mcp.json"));
     assert.equal(claude.other, true);
@@ -89,12 +95,15 @@ test("init wires detected Claude and Antigravity to the installed package and sk
 
     // Running init again changes nothing.
     const before = await readFile(join(projectRoot, ".mcp.json"), "utf8");
-    setupProject({ projectRoot, env, runCommand, homeDir });
+    setupProject({ projectRoot, env, runCommand, homeDir, global: false });
     assert.equal(await readFile(join(projectRoot, ".mcp.json"), "utf8"), before);
+    assert.deepEqual((await readJson(join(projectRoot, ".claude", "settings.local.json"))).enabledMcpjsonServers, [
+      "sharelane",
+    ]);
   });
 });
 
-test("init --yes adds Antigravity's global allow rule once, keeping other settings", async () => {
+test("init adds Antigravity's global allow rule once, keeping other settings", async () => {
   await withProject(async (projectRoot, scratch) => {
     const env = await fakePath(scratch, ["agy"]);
     const homeDir = join(scratch, "home");
@@ -102,34 +111,35 @@ test("init --yes adds Antigravity's global allow rule once, keeping other settin
     await mkdir(join(homeDir, ".gemini", "antigravity-cli"), { recursive: true });
     await writeFile(settingsPath, JSON.stringify({ colorScheme: "dark", permissions: { allow: ["command(git)"] } }));
 
-    const output = setupProject({ projectRoot, env, homeDir, yes: true }).lines.join("\n");
+    const output = setupProject({ projectRoot, env, homeDir }).lines.join("\n");
     assert.match(output, /allowed ShareLane tools globally/);
     const settings = await readJson(settingsPath);
     assert.equal(settings.colorScheme, "dark");
     assert.deepEqual(settings.permissions.allow, ["command(git)", "mcp(sharelane/*)"]);
 
-    setupProject({ projectRoot, env, homeDir, yes: true });
+    const again = setupProject({ projectRoot, env, homeDir, global: false }).lines.join("\n");
+    assert.match(again, /already allowed globally/);
+    assert.doesNotMatch(again, /add "mcp\(sharelane/);
     assert.deepEqual((await readJson(settingsPath)).permissions.allow, ["command(git)", "mcp(sharelane/*)"]);
   });
 });
 
-test("init only prints the global Codex command unless --yes is given", async () => {
+test("init connects Codex once, re-adds its approval line, and only prints with --no-global", async () => {
   await withProject(async (projectRoot, scratch) => {
     const env = await fakePath(scratch, ["codex"]);
     const homeDir = join(scratch, "home");
     const configPath = join(homeDir, ".codex", "config.toml");
+    const bin = resolve("bin", "sharelane.mjs");
+    const written = `model = "x"\r\n\r\n[mcp_servers.sharelane]\r\ncommand = "node"\r\nargs = ['${bin}', "mcp"]\r\n\r\n[mcp_servers.sharelane.env]\r\nSHARELANE_AGENT = "codex"\r\n`;
     const calls: string[][] = [];
     // Like the real `codex mcp add`, rewrite the entry without the approval line.
     const runCommand: CommandRunner = (command, args) => {
       calls.push([command, ...args]);
-      writeFileSync(
-        configPath,
-        'model = "x"\r\n\r\n[mcp_servers.sharelane]\r\ncommand = "node"\r\n\r\n[mcp_servers.sharelane.env]\r\nSHARELANE_AGENT = "codex"\r\n',
-      );
+      writeFileSync(configPath, written);
       return { status: 0, output: "" };
     };
 
-    const printed = setupProject({ projectRoot, env, runCommand, homeDir }).lines.join("\n");
+    const printed = setupProject({ projectRoot, env, runCommand, homeDir, global: false }).lines.join("\n");
     assert.equal(calls.length, 0);
     assert.match(printed, /codex mcp add sharelane --env SHARELANE_AGENT=codex -- .*sharelane\.mjs.* mcp/);
     assert.match(printed, /default_tools_approval_mode = "approve"/);
@@ -138,27 +148,26 @@ test("init only prints the global Codex command unless --yes is given", async ()
     assert.equal(existsSync(join(projectRoot, ".agents")), false);
 
     await mkdir(join(homeDir, ".codex"), { recursive: true });
-    const applied = setupProject({ projectRoot, env, runCommand, homeDir, yes: true }).lines.join("\n");
+    const applied = setupProject({ projectRoot, env, runCommand, homeDir }).lines.join("\n");
     assert.deepEqual(calls, [
-      [
-        "codex",
-        "mcp",
-        "add",
-        "sharelane",
-        "--env",
-        "SHARELANE_AGENT=codex",
-        "--",
-        process.execPath,
-        resolve("bin", "sharelane.mjs"),
-        "mcp",
-      ],
+      ["codex", "mcp", "add", "sharelane", "--env", "SHARELANE_AGENT=codex", "--", process.execPath, bin, "mcp"],
     ]);
-    assert.match(applied, /Codex: added the global ShareLane MCP server/);
+    assert.match(applied, /Codex: connected the global ShareLane MCP server/);
     assert.match(applied, /without a prompt/);
-    assert.equal(
-      await readFile(configPath, "utf8"),
-      'model = "x"\r\n\r\n[mcp_servers.sharelane]\r\ndefault_tools_approval_mode = "approve"\r\ncommand = "node"\r\n\r\n[mcp_servers.sharelane.env]\r\nSHARELANE_AGENT = "codex"\r\n',
+    const approved = written.replace(
+      "[mcp_servers.sharelane]\r\n",
+      '[mcp_servers.sharelane]\r\ndefault_tools_approval_mode = "approve"\r\n',
     );
+    assert.equal(await readFile(configPath, "utf8"), approved);
+
+    // Already connected: nothing is run or rewritten, and nothing is left to do.
+    for (const global of [true, false]) {
+      const again = setupProject({ projectRoot, env, runCommand, homeDir, global }).lines.join("\n");
+      assert.match(again, /Codex: global ShareLane MCP server already connected/);
+      assert.doesNotMatch(again, /codex mcp add|default_tools_approval_mode/);
+    }
+    assert.equal(calls.length, 1);
+    assert.equal(await readFile(configPath, "utf8"), approved);
   });
 });
 

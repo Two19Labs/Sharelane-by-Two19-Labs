@@ -7,6 +7,7 @@ import { loadAgentRegistry } from "../adapters/adapter.js";
 import { CHECKS_PATH, installDefaultChecks } from "./checks.js";
 import { initializeContext, relativeContextPath } from "./context.js";
 import {
+  approveClaudeMcpServer,
   installAntigravityIntegration,
   installClaudeClaimHook,
   installClaudeMcpConfig,
@@ -81,17 +82,45 @@ function displayCommand(command: string, args: string[]): string {
 const ANTIGRAVITY_RULE = "mcp(sharelane/*)";
 const CODEX_APPROVE = 'default_tools_approval_mode = "approve"';
 
-/** Add Antigravity's global ShareLane allow rule. False when it was already there. */
-function allowAntigravityMcp(homeDir: string): boolean {
+/**
+ * Ensure Antigravity's global ShareLane allow rule. With `write` false it only
+ * reports. "present" when it was already there.
+ */
+function allowAntigravityMcp(homeDir: string, write: boolean): "added" | "present" | "missing" {
   const path = join(homeDir, ".gemini", "antigravity-cli", "settings.json");
   const settings = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
   settings.permissions ??= {};
   const allow: string[] = (settings.permissions.allow ??= []);
-  if (allow.includes(ANTIGRAVITY_RULE)) return false;
+  if (allow.includes(ANTIGRAVITY_RULE)) return "present";
+  if (!write) return "missing";
   allow.push(ANTIGRAVITY_RULE);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
-  return true;
+  return "added";
+}
+
+/** The `[mcp_servers.sharelane]` section of Codex's config, if registered. */
+function readCodexEntry(codexHome: string) {
+  const path = join(codexHome, "config.toml");
+  if (!existsSync(path)) return undefined;
+  const text = readFileSync(path, "utf8");
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim() === "[mcp_servers.sharelane]");
+  if (start === -1) return undefined;
+  const next = lines.findIndex((line, index) => index > start && line.trim().startsWith("["));
+  const section = lines.slice(start + 1, next === -1 ? undefined : next);
+  return {
+    path,
+    lines,
+    start,
+    eol: text.includes("\r\n") ? "\r\n" : "\n",
+    approved: section.some((line) => /^\s*default_tools_approval_mode\s*=/.test(line)),
+    /** Whether the entry starts this ShareLane install (paths compared loosely). */
+    runs: (binPath: string) => {
+      const loose = (value: string) => value.replaceAll("\\\\", "\\").replaceAll("/", "\\").toLowerCase();
+      return loose(section.join("\n")).includes(loose(binPath));
+    },
+  };
 }
 
 /**
@@ -99,25 +128,37 @@ function allowAntigravityMcp(homeDir: string): boolean {
  * add` rewrites the server entry and drops this line, so it is re-added after.
  */
 function approveCodexTools(codexHome: string): "added" | "present" | "missing" {
-  const path = join(codexHome, "config.toml");
-  if (!existsSync(path)) return "missing";
-  const text = readFileSync(path, "utf8");
-  const lines = text.split(/\r?\n/);
-  const start = lines.findIndex((line) => line.trim() === "[mcp_servers.sharelane]");
-  if (start === -1) return "missing";
-  const next = lines.findIndex((line, index) => index > start && line.trim().startsWith("["));
-  const section = lines.slice(start + 1, next === -1 ? undefined : next);
-  if (section.some((line) => /^\s*default_tools_approval_mode\s*=/.test(line))) return "present";
-  lines.splice(start + 1, 0, CODEX_APPROVE);
-  writeFileSync(path, lines.join(text.includes("\r\n") ? "\r\n" : "\n"), "utf8");
+  const entry = readCodexEntry(codexHome);
+  if (!entry) return "missing";
+  if (entry.approved) return "present";
+  entry.lines.splice(entry.start + 1, 0, CODEX_APPROVE);
+  writeFileSync(entry.path, entry.lines.join(entry.eol), "utf8");
   return "added";
+}
+
+/** Why delegation cannot work here yet, or undefined when the repo is ready. */
+function gitProblem(projectRoot: string): string | undefined {
+  const git = (...args: string[]) =>
+    spawnSync("git", args, { cwd: projectRoot, encoding: "utf8", windowsHide: true, shell: false });
+  const inside = git("rev-parse", "--is-inside-work-tree");
+  if (inside.error) return "Git is not installed or not on PATH. Install Git; delegated tasks run on Git branches.";
+  if (inside.status !== 0) {
+    return 'This folder is not a Git repository, so agents cannot delegate yet. Run: git init, git add -A, git commit -m "initial commit".';
+  }
+  if (git("rev-parse", "--verify", "HEAD").status !== 0) {
+    return 'This repository has no commits yet, so delegated tasks have nothing to branch from. Run: git add -A, git commit -m "initial commit".';
+  }
+  return undefined;
 }
 
 export interface SetupOptions {
   projectRoot: string;
   env?: NodeJS.ProcessEnv;
-  /** Change global agent settings (Codex, Antigravity) instead of printing the steps. */
-  yes?: boolean;
+  /**
+   * Also set up the per-computer agent settings ShareLane needs (Codex's MCP
+   * entry, Antigravity's allow rule). On by default; false only reports them.
+   */
+  global?: boolean;
   runCommand?: CommandRunner;
   /** Where global agent settings live; tests point this at a scratch folder. */
   homeDir?: string;
@@ -134,9 +175,13 @@ export function setupProject(options: SetupOptions): SetupReport {
   const env = options.env ?? process.env;
   const runCommand = options.runCommand ?? runWithoutShell;
   const homeDir = options.homeDir ?? homedir();
+  const applyGlobal = options.global ?? true;
   const done: string[] = [];
   const skipped: string[] = [];
   const todo: string[] = [];
+
+  const problem = gitProblem(projectRoot);
+  if (problem) todo.push(problem);
 
   const context = initializeContext(projectRoot);
   installAgentInstructions(projectRoot);
@@ -175,9 +220,10 @@ export function setupProject(options: SetupOptions): SetupReport {
 
   if (found("claude")) {
     installClaudeMcpConfig(projectRoot, launcher);
+    approveClaudeMcpServer(projectRoot);
     installClaudeClaimHook(projectRoot);
     const statusLine = installClaudeUsageStatusLine(projectRoot);
-    done.push("Claude Code: MCP server in .mcp.json and edit guard in .claude/settings.json.");
+    done.push("Claude Code: MCP server in .mcp.json (pre-approved for you) and edit guard in .claude/settings.json.");
     done.push(
       statusLine
         ? "Claude Code: usage status line (chains to your own) in .claude/settings.json."
@@ -189,18 +235,13 @@ export function setupProject(options: SetupOptions): SetupReport {
     installAntigravityIntegration(projectRoot, launcher);
     done.push("Antigravity CLI: MCP server and edit guard in .agents/mcp_config.json and .agents/hooks.json.");
     const manual = `Antigravity CLI: add "${ANTIGRAVITY_RULE}" to permissions.allow in ~/.gemini/antigravity-cli/settings.json (its permission rules are global-only)`;
-    if (options.yes) {
-      try {
-        done.push(
-          allowAntigravityMcp(homeDir)
-            ? `Antigravity CLI: allowed ShareLane tools globally ("${ANTIGRAVITY_RULE}").`
-            : "Antigravity CLI: ShareLane tools were already allowed globally.",
-        );
-      } catch (error) {
-        todo.push(`${manual}; ShareLane could not edit it (${(error as Error).message}).`);
-      }
-    } else {
-      todo.push(`${manual}, or re-run init with --yes.`);
+    try {
+      const rule = allowAntigravityMcp(homeDir, applyGlobal);
+      if (rule === "added") done.push(`Antigravity CLI: allowed ShareLane tools globally ("${ANTIGRAVITY_RULE}").`);
+      else if (rule === "present") done.push("Antigravity CLI: ShareLane tools already allowed globally.");
+      else todo.push(`${manual}, or run init without --no-global.`);
+    } catch (error) {
+      todo.push(`${manual}; ShareLane could not edit it (${(error as Error).message}).`);
     }
   }
 
@@ -220,21 +261,29 @@ export function setupProject(options: SetupOptions): SetupReport {
     const codexCommand = registry.agents.codex!.command;
     const shown = displayCommand(codexCommand, args);
     const approveStep = `Codex: so headless workers can call ShareLane, add ${CODEX_APPROVE} under [mcp_servers.sharelane] in ~/.codex/config.toml`;
-    if (options.yes) {
+    const codexHome = env.CODEX_HOME || join(homeDir, ".codex");
+    const entry = readCodexEntry(codexHome);
+    let registered = Boolean(entry?.runs(launcher.binPath));
+    if (registered) {
+      done.push("Codex: global ShareLane MCP server already connected.");
+    } else if (applyGlobal) {
       const result = runCommand(codexCommand, args, env);
-      if (result.status === 0) {
-        done.push(`Codex: added the global ShareLane MCP server (${shown}).`);
-        const codexHome = env.CODEX_HOME || join(homeDir, ".codex");
-        if (approveCodexTools(codexHome) === "missing") todo.push(`${approveStep}.`);
-        else done.push("Codex: headless workers may call ShareLane tools without a prompt.");
-      } else {
-        todo.push(`Codex: \`${shown}\` failed (${result.output || `exit ${result.status}`}); run it yourself.`);
-        todo.push(`${approveStep}.`);
-      }
+      registered = result.status === 0;
+      if (registered) done.push(`Codex: connected the global ShareLane MCP server (${shown}).`);
+      else todo.push(`Codex: \`${shown}\` failed (${result.output || `exit ${result.status}`}); run it yourself.`);
     } else {
-      todo.push(`Codex uses a global MCP entry, so ShareLane did not change it. Run (or re-run init with --yes):\n    ${shown}`);
-      todo.push(`${approveStep}, or re-run init with --yes.`);
+      todo.push(`Codex uses a global MCP entry. Run it yourself, or run init without --no-global:\n    ${shown}`);
     }
+    // Re-read after `codex mcp add`, which drops the approval line.
+    const approval = !registered
+      ? "missing"
+      : applyGlobal
+        ? approveCodexTools(codexHome)
+        : readCodexEntry(codexHome)?.approved
+          ? "present"
+          : "missing";
+    if (approval === "added") done.push("Codex: headless workers may call ShareLane tools without a prompt.");
+    else if (approval === "missing") todo.push(`${approveStep}.`);
   }
 
   if (detected.length === 0) {

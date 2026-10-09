@@ -40,6 +40,7 @@ const runtimeIgnorePatterns = [
   ".sharelane/sharelane.db",
   ".sharelane/sharelane.db-shm",
   ".sharelane/sharelane.db-wal",
+  ".claude/settings.local.json",
 ];
 
 export function installRuntimeIgnores(projectRoot = process.cwd()): void {

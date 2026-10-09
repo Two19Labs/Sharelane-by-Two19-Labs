@@ -11,14 +11,15 @@ function usage(): string {
     "ShareLane",
     "",
     "Usage:",
-    "  sharelane init [--yes]",
+    "  sharelane init [--no-global]",
     "  sharelane mcp",
     "  sharelane dashboard [--port <n>] [--open]",
     "  sharelane run <agent> <prompt>",
     "",
     "Commands:",
-    "  init       Set up shared context, approved checks, and every agent CLI found on PATH.",
-    "             --yes also changes global agent settings (Codex, Antigravity).",
+    "  init       Set up this project for every agent CLI found on PATH. Run it in the project folder.",
+    "             Also connects Codex and Antigravity in your global agent settings;",
+    "             --no-global leaves those alone and prints the steps instead.",
     "  mcp        Start the ShareLane MCP server on stdio (agent CLIs launch this).",
     `  dashboard  Serve the live office dashboard on this computer (default port ${DEFAULT_DASHBOARD_PORT}).`,
     "  run        Ask one configured agent to do a task and wait for its answer.",
@@ -54,7 +55,7 @@ async function run(): Promise<void> {
     }
     const dashboard = await startDashboard({ projectRoot: process.cwd(), port });
     console.log(`ShareLane dashboard: ${dashboard.url}`);
-    console.log("Read-only and only reachable from this computer. Press Ctrl+C to stop.");
+    console.log("Only reachable from this computer. Press Ctrl+C to stop.");
     if (extra.includes("--open")) openInBrowser(dashboard.url);
     await new Promise<void>((resolve) => {
       process.once("SIGINT", () => resolve());
@@ -77,14 +78,15 @@ async function run(): Promise<void> {
     return;
   }
 
-  const yes = extra.length === 1 && (extra[0] === "--yes" || extra[0] === "-y");
-  if (command !== "init" || (extra.length > 0 && !yes)) {
+  // --yes was required before global setup became the default; still accepted.
+  const initFlags = ["--no-global", "--yes", "-y"];
+  if (command !== "init" || extra.some((flag) => !initFlags.includes(flag))) {
     console.log(usage());
     process.exitCode = command && command !== "help" && command !== "--help" ? 1 : 0;
     return;
   }
 
-  const report = setupProject({ projectRoot: process.cwd(), yes });
+  const report = setupProject({ projectRoot: process.cwd(), global: !extra.includes("--no-global") });
   console.log(report.lines.join("\n"));
 }
 
@@ -92,6 +94,10 @@ try {
   await run();
 } catch (error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
   console.error(`ShareLane failed: ${message}`);
+  if (code === "EPERM" || code === "EACCES") {
+    console.error(`ShareLane cannot write in ${process.cwd()}. cd into your project folder and run it again.`);
+  }
   process.exitCode = 1;
 }

@@ -169,6 +169,21 @@ export function installClaudeMcpConfig(projectRoot: string, launcher: McpLaunche
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }
 
+/**
+ * Approve the project's ShareLane server for this user, as Claude Code itself
+ * does when you accept its prompt. settings.local.json is personal and not
+ * committed, so a cloned repo still asks each teammate.
+ */
+export function approveClaudeMcpServer(projectRoot: string): void {
+  const path = join(projectRoot, ".claude", "settings.local.json");
+  const settings = readJson(path);
+  const enabled = Array.isArray(settings.enabledMcpjsonServers) ? (settings.enabledMcpjsonServers as unknown[]) : [];
+  if (enabled.includes("sharelane")) return;
+  settings.enabledMcpjsonServers = [...enabled, "sharelane"];
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+}
+
 function readJson(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
   const source = readFileSync(path, "utf8").trim();
