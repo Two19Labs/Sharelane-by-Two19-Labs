@@ -98,7 +98,9 @@ To keep `init` from touching your global agent settings, run `sharelane init --n
 
 It also creates `.sharelane/` with a starter context map and `.sharelane/checks.json` (see [Configuration](#configuration)), adds ShareLane's instructions to `AGENTS.md` and `CLAUDE.md`, and adds its runtime files to `.gitignore`.
 
-At the end, `init` lists what it did, anything still to do, and what to commit when you share the repo. **Restart** any agent already open in the project so it loads ShareLane, then ask it to "fill in the ShareLane context for this project": the starter chunks are empty, and filling them in gives every agent the same overview.
+At the end, `init` lists what it did, anything still to do, and what to commit when you share the repo. **Restart** any agent already open in the project so it loads ShareLane.
+
+**First run:** `init` leaves a one-time playbook, `.sharelane/ONBOARDING.md`, and tells every agent to follow it if it exists. The first agent you open in the project (Claude, Codex or Antigravity) then reads the project, writes the shared context chunks with the files each one covers, proposes test and lint commands for `.sharelane/checks.json` (asking you before adding any), and deletes the playbook. It stays out of Git, and a claim makes sure only one agent does it. If some starter chunks are still unwritten, running `init` again brings the playbook back.
 
 ### 3. Delegate your first task
 

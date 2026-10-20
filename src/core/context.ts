@@ -81,6 +81,17 @@ const STARTER_CHUNKS: StarterChunk[] = [
   },
 ];
 
+/** Body of a starter chunk nobody has written yet. */
+export const STARTER_PLACEHOLDER = "No shared context has been written here yet.";
+
+/** Starter chunks still holding only their placeholder text. */
+export function unwrittenStarterChunks(projectRoot = process.cwd()): string[] {
+  return STARTER_CHUNKS.map((starter) => starter.id).filter((id) => {
+    const filePath = chunkPath(id, projectRoot);
+    return existsSync(filePath) && readFileSync(filePath, "utf8").includes(STARTER_PLACEHOLDER);
+  });
+}
+
 export class ChunkTooLargeError extends Error {
   constructor(actual: number) {
     super(
@@ -450,7 +461,7 @@ export function initializeContext(
         coversFiles: [],
         updatedAt: new Date().toISOString(),
         filePath,
-        content: `# ${starter.title}\n\nNo shared context has been written here yet.`,
+        content: `# ${starter.title}\n\n${STARTER_PLACEHOLDER}`,
       };
       writeAtomic(filePath, formatChunk(chunk));
       createdChunks.push(starter.id);

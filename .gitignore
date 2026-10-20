@@ -29,3 +29,7 @@ Thumbs.db
 
 # Maintainers' private work log and audits (kept out of the public repository)
 /private/
+
+# ShareLane local runtime
+.claude/settings.local.json
+.sharelane/ONBOARDING.md

@@ -15,6 +15,7 @@ import {
   type McpLauncher,
 } from "./hooks.js";
 import { installAgentInstructions, installRuntimeIgnores } from "./instructions.js";
+import { installOnboarding } from "./onboarding.js";
 import { findOnPath, resolveAgentExecutable } from "./runner.js";
 
 /** The installed ShareLane package (this repo in development). */
@@ -194,6 +195,12 @@ export function setupProject(options: SetupOptions): SetupReport {
       : "Starter chunks already existed; none were overwritten.",
   );
   done.push("Agent instructions (AGENTS.md, CLAUDE.md) and local-runtime Git ignores.");
+  const onboarding = installOnboarding(projectRoot);
+  if (onboarding !== "none") {
+    done.push(
+      "Onboarding: the first agent you open here will fill in the shared context and suggest checks for this project (.sharelane/ONBOARDING.md, deleted when done).",
+    );
+  }
 
   const checksPath = CHECKS_PATH.replaceAll("\\", "/");
   const createdChecks = installDefaultChecks(projectRoot);
