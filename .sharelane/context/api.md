@@ -1,9 +1,9 @@
 ---
 title: API and tools
 read-when: Changing commands, MCP tools, integrations, or public interfaces.
-covers-files: ["src/mcp/**","src/cli.ts"]
-updated-at: 2026-10-08T17:23:57.734Z
-source-hash: 6ef5306215c2d7cdeba9977683104fc5d0fe90da1639aad0bb164f8006839255
+covers-files: ["src/mcp/**","src/cli.ts","src/core/later.ts","src/core/uninstall.ts","bin/**","scripts/**"]
+updated-at: 2026-10-21T20:11:46.836Z
+source-hash: 31a8c358e8242744457a074ddf3fbdcc0d606a4f1f769287c70e8d9e33630e60
 ---
 
 # API and tools
@@ -23,10 +23,15 @@ run_check `{name?}` lists or runs one owner-approved check from `.sharelane/chec
 
 claim, heartbeat, and release manage expiring file and glob claims; a scoped task's claims must stay inside its scope, and its scope stays claimed until it ends. Pending notices ride on every successful tool reply.
 
-Agent wiring: Claude reads `.mcp.json`; Codex uses a global `sharelane` MCP entry with task variables forwarded via `-c mcp_servers.sharelane.env_vars=[...]`; Antigravity reads `.agents/mcp_config.json` and needs the global allow rule `mcp(sharelane/*)`. Generated configs launch `node <bin> mcp`, with a project-relative bin path.
+Agent wiring: Claude reads `.mcp.json` (pre-approved in `.claude/settings.local.json`); Codex uses a global `sharelane` MCP entry with task variables forwarded via `-c mcp_servers.sharelane.env_vars=[...]`; Antigravity reads `.agents/mcp_config.json` and needs the global allow rule `mcp(sharelane/*)`. Generated configs launch `node <bin> mcp`, with a project-relative bin path when ShareLane is installed in the project.
 
-CLI (the `sharelane` bin, or `npm run sharelane -- …` in this repo):
-- `init [--yes]` detects claude, codex, and agy on PATH and wires each. It writes context, instructions, ignores, and `.sharelane/checks.json`, and prints Done / Skipped / Still to do. `--yes` lets it run `codex mcp add`.
+CLI (the `sharelane` bin, or `npm run sharelane -- …` in this repo). `bin/sharelane.mjs` refuses Node older than 24 before loading anything (decision 83).
+- `init [--no-global]` detects claude, codex, and agy on PATH, checks what is already configured, and wires what is missing, including the global Codex entry and Antigravity rule unless `--no-global` (decision 79; `--yes` is still accepted). Writes context, instructions, ignores, `.sharelane/checks.json`, and the one-time `.sharelane/ONBOARDING.md` (decision 80). Prints Done / Skipped / Still to do / When you share this repo, and warns when the folder is not a Git repo or has no commits.
 - `mcp` runs the MCP stdio server.
 - `dashboard [--port 4317] [--open]` serves the office dashboard; its HTTP API (reads, guarded controls, changes, previews) is described in the `ui` chunk.
 - `run <agent> <prompt>` runs one agent once, directly; it is not a delegated task.
+- `later ["prompt"] (--in 2h | --at 16:30 | --when-reset) [--background] [--session <id>]`, `later list`, `later cancel <id>` (`src/core/later.ts`, decision 81). Entries are `.sharelane/later/<id>.json`; a detached `later wait <id>` process polls the wall clock, then fires: window mode opens a terminal running `later run <id>` (Claude with inherited stdio), background mode runs `claude -p … --permission-mode acceptEdits` and logs to `<id>.log`.
+- `uninstall [--global]` removes only what init added (`src/core/uninstall.ts`, decision 82).
+- `--version`.
+
+`scripts/smoke-install.mjs` packs and installs the package into a throwaway prefix and home and runs init, MCP, dashboard, later and uninstall; CI runs it on all three systems. It sets `CODEX_HOME`, because a real Codex on PATH ignores HOME on Windows.
