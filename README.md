@@ -144,7 +144,7 @@ Start your agents from the project folder: ShareLane finds the project from the 
 
 ```sh
 npm install -g sharelane@latest
-sharelane --help
+sharelane --version
 ```
 
 Every project uses the global install, so one update covers them all. If a release changes setup, run `sharelane init` again in each project; it is safe to re-run and keeps your context and settings.
@@ -171,18 +171,34 @@ To reset the context too, delete the whole `.sharelane/` folder before running `
 
 **Remove it completely:**
 
-1. Delete `.sharelane/`, `.agents/mcp_config.json`, `.agents/hooks.json`, `.claude/hooks/sharelane-claim-guard.mjs` and `.claude/hooks/sharelane-statusline.mjs`.
-2. Remove ShareLane's parts, and only those, from files that may hold your own settings:
-   - `.mcp.json`: the `sharelane` entry under `mcpServers`
-   - `.claude/settings.json`: the hook that runs `sharelane-claim-guard` and the `statusLine` that runs `sharelane-statusline`
-   - `AGENTS.md` and `CLAUDE.md`: everything between `<!-- sharelane-context:start -->` and `<!-- sharelane-context:end -->`
-   - `.gitignore`: the `# ShareLane local runtime` block
-3. Merge any `sharelane/task-…` branch you want to keep, then run `git worktree prune` and delete the rest with `git branch -D <name>`.
+```sh
+sharelane uninstall
+```
 
-The global settings serve every project, so leave them unless you are removing ShareLane from your computer entirely. In that case, also run `codex mcp remove sharelane`, remove `mcp(sharelane/*)` from `~/.gemini/antigravity-cli/settings.json`, and run `npm uninstall -g sharelane`.
+This removes everything `init` added to the project and keeps your own settings: the `sharelane` entries in `.mcp.json`, `.claude/settings.json`, `.claude/settings.local.json` and `.agents/`, ShareLane's hook scripts, its block in `AGENTS.md` and `CLAUDE.md`, its `.gitignore` lines, and the `.sharelane/` folder. It refuses while delegated tasks are still running. Task branches (`sharelane/task-…`) are kept because they may hold work you haven't merged; merge what you want, then delete the rest with `git branch -D <name>`.
+
+The Codex and Antigravity settings are shared by every project, so `uninstall` keeps them. To remove ShareLane from your computer entirely, run `sharelane uninstall --global` in your last project, then `npm uninstall -g sharelane`.
+
+### Continue later (when your limit runs out)
+
+When your Claude Code limit runs out, schedule the chat to pick up again by itself. Run this in the project folder:
+
+```sh
+sharelane later "finish the settings page and run the tests" --in 2h
+sharelane later "continue" --at 16:30
+sharelane later --when-reset           # uses ShareLane's reading of your Claude limit
+sharelane later list
+sharelane later cancel <id>
+```
+
+- **Same chat:** ShareLane notes this project's most recent Claude chat when you schedule it and resumes exactly that one (`--session <id>` picks another).
+- **Window or background:** at the set time it opens a new terminal window with the chat resumed and your prompt already sent, so you can watch and step in. With `--background` it runs without a window instead, allowed to edit files (shell commands need your existing allow rules), and saves Claude's answer to `.sharelane/later/<id>.log`.
+- **`--when-reset`:** waits until 2 minutes after the reset time ShareLane reads, and checks again before starting. The reading isn't always available or exact, so `--in` and `--at` are the dependable options.
+- **Keep the computer on.** Closing the terminal and sleep are fine (it starts when the computer wakes if the time has passed). A restart or sign-out cancels it, and `list` then shows it as `lost`.
 
 ### Troubleshooting
 
+- **"ShareLane needs Node.js 24 or newer":** install the current LTS from [nodejs.org](https://nodejs.org), open a new terminal, and check with `node --version`.
 - **`EPERM: operation not permitted, mkdir 'C:\Windows\.sharelane…'`:** `init` sets up the folder you are in. `cd` into your project first.
 - **PowerShell says "running scripts is disabled" for `npm`, `npx`, `codex` or `sharelane`:** run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or call the `.cmd` versions (`npm.cmd`, `sharelane.cmd`).
 - **`npm warn allow-scripts … esbuild`:** harmless. esbuild's platform binary is installed anyway; to silence the warning, run `npm config set allow-scripts=esbuild --location=user`.

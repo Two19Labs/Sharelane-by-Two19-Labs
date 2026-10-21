@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const HOOK_NAME = "sharelane-claim-guard.mjs";
@@ -182,6 +182,88 @@ export function approveClaudeMcpServer(projectRoot: string): void {
   settings.enabledMcpjsonServers = [...enabled, "sharelane"];
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+}
+
+/** Write a JSON file, or delete it when nothing is left in it. */
+function writeOrRemove(path: string, value: Record<string, unknown>): void {
+  if (Object.keys(value).length === 0) rmSync(path, { force: true });
+  else writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+/** Remove a folder only if it is empty. */
+function removeIfEmpty(directory: string): void {
+  if (existsSync(directory) && readdirSync(directory).length === 0) rmdirSync(directory);
+}
+
+/**
+ * Undo every agent integration `init` wrote in this project, keeping the
+ * user's own servers, hooks and settings. Returns the files it changed.
+ */
+export function removeAgentIntegrations(projectRoot: string): string[] {
+  const changed: string[] = [];
+  const edit = (relativePath: string, update: (value: Record<string, unknown>) => boolean): void => {
+    const path = join(projectRoot, relativePath);
+    if (!existsSync(path)) return;
+    const value = readJson(path);
+    if (update(value)) {
+      writeOrRemove(path, value);
+      changed.push(relativePath);
+    }
+  };
+  const dropServer = (value: Record<string, unknown>): boolean => {
+    const servers = value.mcpServers as Record<string, unknown> | undefined;
+    if (!servers || !("sharelane" in servers)) return false;
+    delete servers.sharelane;
+    if (Object.keys(servers).length === 0) delete value.mcpServers;
+    return true;
+  };
+
+  edit(".mcp.json", dropServer);
+  edit(join(".agents", "mcp_config.json"), dropServer);
+  edit(join(".agents", "hooks.json"), (value) => {
+    if (!("sharelane-claim-guard" in value)) return false;
+    delete value["sharelane-claim-guard"];
+    return true;
+  });
+  edit(join(".claude", "settings.json"), (value) => {
+    let touched = false;
+    const hooks = value.hooks as Record<string, unknown> | undefined;
+    if (hooks && Array.isArray(hooks.PreToolUse)) {
+      const kept = hooks.PreToolUse.filter((group) => !JSON.stringify(group).includes(HOOK_NAME));
+      if (kept.length !== hooks.PreToolUse.length) {
+        touched = true;
+        if (kept.length > 0) hooks.PreToolUse = kept;
+        else delete hooks.PreToolUse;
+        if (Object.keys(hooks).length === 0) delete value.hooks;
+      }
+    }
+    const statusLine = value.statusLine as { command?: unknown } | undefined;
+    if (statusLine && String(statusLine.command ?? "").includes(STATUSLINE_NAME)) {
+      delete value.statusLine;
+      touched = true;
+    }
+    return touched;
+  });
+  edit(join(".claude", "settings.local.json"), (value) => {
+    const enabled = value.enabledMcpjsonServers;
+    if (!Array.isArray(enabled) || !enabled.includes("sharelane")) return false;
+    const kept = enabled.filter((name) => name !== "sharelane");
+    if (kept.length > 0) value.enabledMcpjsonServers = kept;
+    else delete value.enabledMcpjsonServers;
+    return true;
+  });
+
+  for (const script of [HOOK_NAME, STATUSLINE_NAME]) {
+    const path = join(projectRoot, ".claude", "hooks", script);
+    if (existsSync(path)) {
+      rmSync(path);
+      changed.push(join(".claude", "hooks", script));
+    }
+  }
+  removeIfEmpty(join(projectRoot, ".claude", "hooks"));
+  removeIfEmpty(join(projectRoot, ".claude"));
+  removeIfEmpty(join(projectRoot, ".agents"));
+  return changed;
 }
 
 function readJson(path: string): Record<string, unknown> {

@@ -137,6 +137,47 @@ function approveCodexTools(codexHome: string): "added" | "present" | "missing" {
   return "added";
 }
 
+/**
+ * Undo the per-computer settings `init` applies: Codex's ShareLane MCP entry
+ * and Antigravity's allow rule. Every project on this computer uses them.
+ */
+export function removeGlobalSettings(options: {
+  env?: NodeJS.ProcessEnv;
+  homeDir?: string;
+  runCommand?: CommandRunner;
+} = {}): string[] {
+  const env = options.env ?? process.env;
+  const homeDir = options.homeDir ?? homedir();
+  const lines: string[] = [];
+
+  const codexHome = env.CODEX_HOME || join(homeDir, ".codex");
+  if (readCodexEntry(codexHome)) {
+    const codexCommand = loadAgentRegistry().agents.codex?.command ?? "codex";
+    const result = (options.runCommand ?? runWithoutShell)(codexCommand, ["mcp", "remove", "sharelane"], env);
+    lines.push(
+      result.status === 0
+        ? "Codex: removed the global ShareLane MCP server."
+        : `Codex: \`${codexCommand} mcp remove sharelane\` failed (${result.output || `exit ${result.status}`}); run it yourself.`,
+    );
+  }
+
+  const settingsPath = join(homeDir, ".gemini", "antigravity-cli", "settings.json");
+  if (existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+      const allow: unknown = settings.permissions?.allow;
+      if (Array.isArray(allow) && allow.includes(ANTIGRAVITY_RULE)) {
+        settings.permissions.allow = allow.filter((rule) => rule !== ANTIGRAVITY_RULE);
+        writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+        lines.push(`Antigravity CLI: removed the global "${ANTIGRAVITY_RULE}" allow rule.`);
+      }
+    } catch (error) {
+      lines.push(`Antigravity CLI: could not edit ${settingsPath} (${(error as Error).message}); remove "${ANTIGRAVITY_RULE}" yourself.`);
+    }
+  }
+  return lines;
+}
+
 /** Why delegation cannot work here yet, or undefined when the repo is ready. */
 function gitProblem(projectRoot: string): string | undefined {
   const git = (...args: string[]) =>

@@ -30,3 +30,23 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  # Install the packed package as a new user would, then run init, the MCP
+  # server, the dashboard, later and uninstall (scripts/smoke-install.mjs).
+  install:
+    name: install on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: |
+          git config --global user.name "ShareLane CI"
+          git config --global user.email "ci@sharelane.invalid"
+          git config --global init.defaultBranch main
+      - run: node scripts/smoke-install.mjs
