@@ -1,9 +1,21 @@
 #!/usr/bin/env node
 
 import { relativeContextPath } from "./core/context.js";
+import {
+  cancelLaterEntry,
+  formatLaterList,
+  listLaterEntries,
+  runLaterEntry,
+  scheduleLater,
+  waitLaterEntry,
+} from "./core/later.js";
+import { readClaudeQuota } from "./core/quota.js";
 import { runAgent } from "./core/runner.js";
-import { setupProject } from "./core/setup.js";
+import { packageRoot, setupProject } from "./core/setup.js";
+import { uninstallProject } from "./core/uninstall.js";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { DEFAULT_DASHBOARD_PORT, startDashboard } from "./dashboard/server.js";
 
 function usage(): string {
@@ -15,6 +27,10 @@ function usage(): string {
     "  sharelane mcp",
     "  sharelane dashboard [--port <n>] [--open]",
     "  sharelane run <agent> <prompt>",
+    '  sharelane later ["prompt"] (--in 2h | --at 16:30 | --when-reset) [--background] [--session <id>]',
+    "  sharelane later list | cancel <id>",
+    "  sharelane uninstall [--global]",
+    "  sharelane --version",
     "",
     "Commands:",
     "  init       Set up this project for every agent CLI found on PATH. Run it in the project folder.",
@@ -23,6 +39,10 @@ function usage(): string {
     "  mcp        Start the ShareLane MCP server on stdio (agent CLIs launch this).",
     `  dashboard  Serve the live office dashboard on this computer (default port ${DEFAULT_DASHBOARD_PORT}).`,
     "  run        Ask one configured agent to do a task and wait for its answer.",
+    "  later      Continue this project's latest Claude chat at a set time, e.g. after your limit",
+    "             resets. Opens a terminal window; --background runs it without one.",
+    "  uninstall  Remove ShareLane from this project. --global also removes the Codex and",
+    "             Antigravity settings that all your projects share.",
   ].join("\n");
 }
 
@@ -37,6 +57,51 @@ function openInBrowser(url: string): void {
   const child = spawn(command, args, { detached: true, stdio: "ignore", shell: false });
   child.on("error", () => console.log(`Open ${url} in your browser.`));
   child.unref();
+}
+
+/** `sharelane later …`: schedule, list or cancel a timed continuation. */
+async function runLater(extra: string[]): Promise<void> {
+  const projectRoot = process.cwd();
+  const [sub, id] = extra;
+  // Internal: the hidden waiting process, and the command a new terminal window runs.
+  if (sub === "wait" && id && extra.length === 2) return waitLaterEntry(id, { projectRoot });
+  if (sub === "run" && id && extra.length === 2) return runLaterEntry(projectRoot, id);
+  if (sub === "list" && extra.length === 1) {
+    console.log(formatLaterList(listLaterEntries(projectRoot)).join("\n"));
+    return;
+  }
+  if (sub === "cancel" && extra.length === 2) {
+    const { cancelled } = cancelLaterEntry(projectRoot, id!);
+    console.log(`Cancelled ${cancelled.id}.`);
+    return;
+  }
+
+  const valueFlags = ["--in", "--at", "--session"];
+  const options: { in?: string; at?: string; session?: string } = {};
+  const promptParts: string[] = [];
+  let whenReset = false;
+  let background = false;
+  for (let index = 0; index < extra.length; index += 1) {
+    const part = extra[index]!;
+    if (valueFlags.includes(part)) {
+      const value = extra[index + 1];
+      if (value === undefined) throw new Error(`${part} needs a value.`);
+      options[part.slice(2) as "in" | "at" | "session"] = value;
+      index += 1;
+    } else if (part === "--when-reset") whenReset = true;
+    else if (part === "--background") background = true;
+    else if (part.startsWith("--")) throw new Error(`Unknown option ${part}.\n\n${usage()}`);
+    else promptParts.push(part);
+  }
+  const { confirmationLines } = scheduleLater({
+    projectRoot,
+    prompt: promptParts.join(" "),
+    ...options,
+    whenReset,
+    background,
+    quotaReport: whenReset ? await readClaudeQuota() : undefined,
+  });
+  console.log(confirmationLines.join("\n"));
 }
 
 async function run(): Promise<void> {
@@ -75,6 +140,27 @@ async function run(): Promise<void> {
     console.log(result.finalMessage);
     console.log(`Session: ${result.sessionId}`);
     console.log(`Log: ${relativeContextPath(result.logPath, process.cwd())}`);
+    return;
+  }
+
+  if (command === "--version" || command === "-v" || command === "version") {
+    const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version: string };
+    console.log(manifest.version);
+    return;
+  }
+
+  if (command === "later") {
+    await runLater(extra);
+    return;
+  }
+
+  if (command === "uninstall") {
+    if (extra.some((flag) => flag !== "--global")) {
+      console.log(usage());
+      process.exitCode = 1;
+      return;
+    }
+    console.log(uninstallProject({ projectRoot: process.cwd(), global: extra.includes("--global") }).join("\n"));
     return;
   }
 

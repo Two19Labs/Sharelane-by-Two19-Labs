@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const START_MARKER = "<!-- sharelane-context:start -->";
@@ -39,12 +39,56 @@ const runtimeIgnorePatterns = [
   ".sharelane/journal/",
   ".sharelane/runs/",
   ".sharelane/tasks/",
+  ".sharelane/later/",
   ".sharelane/sharelane.db",
   ".sharelane/sharelane.db-shm",
   ".sharelane/sharelane.db-wal",
   ".claude/settings.local.json",
   ".sharelane/ONBOARDING.md",
 ];
+
+/**
+ * Remove the ShareLane block from AGENTS.md and CLAUDE.md, deleting a file
+ * that only held the heading `init` created. Returns the files it changed.
+ */
+export function removeAgentInstructions(projectRoot = process.cwd()): string[] {
+  const changed: string[] = [];
+  for (const [name, heading] of [
+    ["AGENTS.md", "# Agent instructions"],
+    ["CLAUDE.md", "# Claude Code instructions"],
+  ] as const) {
+    const path = join(projectRoot, name);
+    if (!existsSync(path)) continue;
+    const existing = readFileSync(path, "utf8");
+    const start = existing.indexOf(START_MARKER);
+    const end = existing.indexOf(END_MARKER);
+    if (start === -1 || end < start) continue;
+    const rest = `${existing.slice(0, start).trimEnd()}\n${existing.slice(end + END_MARKER.length).trimStart()}`.trim();
+    if (rest === "" || rest === heading) rmSync(path);
+    else writeFileSync(path, `${rest}\n`, "utf8");
+    changed.push(name);
+  }
+  return changed;
+}
+
+/**
+ * Remove ShareLane's ignore lines. The settings.local.json line stays while
+ * that file exists, because it can hold the user's own private settings.
+ */
+export function removeRuntimeIgnores(projectRoot = process.cwd()): boolean {
+  const path = join(projectRoot, ".gitignore");
+  if (!existsSync(path)) return false;
+  const existing = readFileSync(path, "utf8");
+  const ours = new Set<string>(["# ShareLane local runtime", ...runtimeIgnorePatterns]);
+  if (existsSync(join(projectRoot, ".claude", "settings.local.json"))) ours.delete(".claude/settings.local.json");
+  const lines = existing.split(/\r?\n/);
+  const kept = lines.filter((line) => !ours.has(line.trim()));
+  if (kept.length === lines.length) return false;
+  const text = kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  if (text === "") rmSync(path);
+  else writeFileSync(path, `${text}\n`, "utf8");
+  return true;
+}
 
 export function installRuntimeIgnores(projectRoot = process.cwd()): void {
   const path = join(projectRoot, ".gitignore");
